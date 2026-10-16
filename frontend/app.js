@@ -120,7 +120,7 @@
     els.alarmSoundStatus.textContent = state.soundEnabled ? 'Sound enabled for newly detected alarms.' : 'Sound is muted until enabled by a user click.';
   }
   function playAlarmDoubleBeep() {
-    if (!state.soundEnabled || !state.audioContext) return;
+    if (!state.soundEnabled || !state.audioContext || state.audioContext.state === 'suspended') return false;
     const context = state.audioContext;
     try {
       const start = context.currentTime + 0.01;
@@ -131,8 +131,10 @@
         gain.gain.setValueAtTime(0.0001, start + offset); gain.gain.exponentialRampToValueAtTime(0.16, start + offset + 0.015); gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.12);
         oscillator.connect(gain); gain.connect(context.destination); oscillator.start(start + offset); oscillator.stop(start + offset + 0.13);
       });
+      return true;
     } catch (_) {
       // The visual alarm remains authoritative when Web Audio is unavailable.
+      return false;
     }
   }
   async function toggleAlarmSound() {
@@ -142,7 +144,10 @@
     try {
       state.audioContext = state.audioContext || new AudioContextClass();
       if (state.audioContext.state === 'suspended' && state.audioContext.resume) await state.audioContext.resume();
+      if (state.audioContext.state === 'suspended') throw new Error('The browser kept audio suspended');
       state.soundEnabled = true; updateAlarmSoundButton();
+      const played = playAlarmDoubleBeep();
+      els.alarmSoundStatus.textContent = played ? 'Sound enabled · test beep played; new alarms will beep twice.' : 'Sound enabled · new alarms will beep twice.';
     } catch (_) {
       state.soundEnabled = false; els.alarmSoundStatus.textContent = 'Sound could not be enabled; visual alarms remain active.';
     }
@@ -240,7 +245,13 @@
     const feederRatio = summary.total_feeders ? Math.max(0, Math.min(100, summary.active_feeders / summary.total_feeders * 100)) : 0;
     $('poweredProgress').style.width = `${powerRatio}%`; $('feederProgress').style.width = `${feederRatio}%`;
     const reportedHealth = String(summary.system_health || 'Unknown');
-    const health = Number(data.stale_sensor_count) > 0 && riskClass(reportedHealth) === 'safe' ? 'Unknown / stale' : reportedHealth; const healthClass = riskClass(health);
+    const clinics = Array.isArray(data.clinics) ? data.clinics : [];
+    const feeders = Array.isArray(data.feeders) ? data.feeders : [];
+    const fresh = (clinic) => freshReading(clinic);
+    const criticalNow = clinics.some((clinic) => fresh(clinic) && (clinic.risk_level === 'Critical' || clinic.temperature_alarm_level === 'critical' || (finite(clinic.temperature_c) && (Number(clinic.temperature_c) < 2 || Number(clinic.temperature_c) > 8))));
+    const warningNow = clinics.some((clinic) => fresh(clinic) && (clinic.risk_level === 'Warning' || clinic.temperature_alarm_level === 'warning' || clinic.power_on === false || (finite(clinic.temperature_c) && Number(clinic.temperature_c) > 6))) || feeders.some((feeder) => feeder.online === false);
+    const derivedHealth = criticalNow ? 'Critical' : warningNow ? 'Warning' : reportedHealth;
+    const health = Number(data.stale_sensor_count) > 0 && riskClass(derivedHealth) === 'safe' ? 'Unknown / stale' : derivedHealth; const healthClass = riskClass(health);
     $('systemHealth').textContent = health; $('healthSub').textContent = 'Risk posture from live state'; $('healthDot').className = `health-dot ${healthClass}`; $('healthTrack').parentElement.className = `health-track ${healthClass}`;
     const total = Number(summary.total_clinics) || 0; $('criticalBar').style.width = total ? `${(Number(summary.critical_clinics || 0) / total) * 100}%` : '0%'; $('warningBar').style.width = total ? `${(Number(summary.warning_clinics || 0) / total) * 100}%` : '0%';
   }

@@ -243,8 +243,8 @@ class Simulation:
                         "data_quality": self._quality(self.feeder_observations.get(feeder_id, {}).get("observed_at")) if self.external_mode else "ok",
                         "clinic_count": sum(c["feeder_id"] == feeder_id for c in self.clinics.values())}
                        for feeder_id in range(1, 7)]
-            critical = sum(c["risk_level"] == "Critical" for c in clinics)
-            warning = sum(c["risk_level"] == "Warning" for c in clinics)
+            critical = sum(c["risk_level"] == "Critical" or c.get("temperature_alarm_level") == "critical" for c in clinics)
+            warning = sum(c["risk_level"] == "Warning" or c.get("temperature_alarm_level") == "warning" or not c["power_on"] for c in clinics)
             # Never count a stale last-known power reading as currently powered.
             powered = sum(c["power_on"] and c["data_quality"] == "ok" for c in clinics)
             active_feeders = sum(feeder["online"] is True and feeder["data_quality"] == "ok" for feeder in feeders)

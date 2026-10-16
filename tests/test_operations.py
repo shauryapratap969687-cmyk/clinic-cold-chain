@@ -126,6 +126,20 @@ def test_temperature_warning_alarm_and_critical_violation(runtime):
         assert next(alert for alert in alerts if alert["kind"] == "high_temperature_alarm")["status"] == "resolved"
 
 
+def test_system_health_escalates_for_shared_outage_and_thermal_breach(runtime):
+    with TestClient(runtime()) as client:
+        initial = client.get("/api/state").json()
+        assert initial["summary"]["system_health"] == "Healthy"
+
+        warning = client.post("/api/simulate", json={"action": "trip_feeder", "feeder_id": 3}).json()
+        assert warning["summary"]["system_health"] == "Warning"
+        assert warning["summary"]["warning_clinics"] == 3
+
+        critical = client.post("/api/simulate", json={"action": "advance", "hours": 6}).json()
+        assert critical["summary"]["system_health"] == "Critical"
+        assert critical["summary"]["critical_clinics"] == 3
+
+
 @pytest.mark.parametrize("payload", [
     {"clinic_id": "CL-99", "temperature_c": 4},
     {"clinic_id": "CL-01", "temperature_c": 101},

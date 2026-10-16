@@ -16,10 +16,21 @@ async function until(condition) {
   assert.fail('UI did not reach the expected state');
 }
 
-function setup({ required = false, role = 'admin', stale = false, failMutation = false } = {}) {
+function setup({ required = false, role = 'admin', stale = false, failMutation = false, audio = false } = {}) {
   const dom = new JSDOM(html, { url: 'http://localhost:8000', runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
   window.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, { get: () => () => {}, set: () => true });
+  let beepStarts = 0;
+  if (audio) {
+    window.AudioContext = class {
+      constructor() { this.state = 'running'; this.currentTime = 0; this.destination = {}; }
+      resume() { return Promise.resolve(); }
+      createOscillator() {
+        return { type: 'sine', frequency: { setValueAtTime() {} }, connect() {}, start() { beepStarts += 1; }, stop() {} };
+      }
+      createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
+    };
+  }
   const errors = [];
   window.addEventListener('error', (event) => errors.push(event.error));
   const user = { username: 'test-user', role, user_id: 1 };
@@ -58,7 +69,7 @@ function setup({ required = false, role = 'admin', stale = false, failMutation =
     return { ok: true, status: 200, json: async () => copy(payload) };
   };
   vm.runInContext(code, dom.getInternalVMContext());
-  return { dom, window, calls, errors, live, $: (id) => window.document.getElementById(id) };
+  return { dom, window, calls, errors, live, getBeepStarts: () => beepStarts, $: (id) => window.document.getElementById(id) };
 }
 
 test('demo loads model and operations, then sends and renders a shared feeder trip', async (t) => {
@@ -124,6 +135,30 @@ test('fresh temperature alarms are visible while stale alarm candidates stay exc
   await until(() => ui.$('temperatureAlarmCount').textContent === '0' && /stale reading/.test(ui.$('temperatureAlarmStatus').textContent));
   assert.match(ui.$('clinicTableBody').firstElementChild.textContent, /Last known alarm/);
   assert.doesNotMatch(ui.$('temperatureAlarmPanel').className, /active/);
+});
+
+test('enabling alarm sound plays a test beep and a threshold crossing beeps again', async (t) => {
+  const ui = setup({ audio: true }); t.after(() => ui.dom.window.close());
+  await until(() => ui.$('temperatureAlarmCount').textContent === '0' && !ui.$('refreshButton').disabled);
+  ui.$('alarmSoundButton').click();
+  await until(() => /test beep played/.test(ui.$('alarmSoundStatus').textContent));
+  assert.equal(ui.getBeepStarts(), 2);
+
+  ui.live.clinics[0].temperature_c = 6.4;
+  ui.$('refreshButton').click();
+  await until(() => ui.$('temperatureAlarmCount').textContent === '1');
+  assert.equal(ui.getBeepStarts(), 4);
+});
+
+test('system health reflects a thermal critical state even if summary is stale', async (t) => {
+  const ui = setup(); t.after(() => ui.dom.window.close());
+  await until(() => ui.$('systemHealth').textContent === 'Healthy' && !ui.$('refreshButton').disabled);
+  ui.live.clinics[0].temperature_c = 8.5;
+  ui.live.clinics[0].temperature_alarm = true;
+  ui.live.clinics[0].temperature_alarm_level = 'critical';
+  ui.live.clinics[0].risk_level = 'Critical';
+  ui.$('refreshButton').click();
+  await until(() => ui.$('systemHealth').textContent === 'Critical');
 });
 
 test('backend temperature alarm fields provide level and override the compatibility fallback', async (t) => {
