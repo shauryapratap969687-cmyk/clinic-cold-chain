@@ -150,12 +150,29 @@ class Simulation:
             "forecast_wind_next_6h": wind,
             "feeder_online": self.feeder_online[clinic["feeder_id"]],
         }
-        too_cold = float(clinic["temperature_c"]) < 2.0
-        thermal_violation = too_cold or float(clinic["temperature_c"]) > 8.0
         feeder_observation = self.feeder_observations.get(clinic["feeder_id"], {})
         outage_hours = max(float(clinic["outage_hours"]),
                            float(feeder_observation.get("outage_hours", 0)) if not observation["feeder_online"] else 0)
         quality = self._quality(clinic.get("observed_at"))
+        too_cold = float(clinic["temperature_c"]) < 2.0
+        too_hot = float(clinic["temperature_c"]) > 8.0
+        thermal_violation = too_cold or too_hot
+        high_temperature_warning = (quality == "ok"
+                                     and float(clinic["temperature_c"]) > config.HIGH_TEMP_ALARM_C
+                                     and not thermal_violation)
+        temperature_alarm = quality == "ok" and (thermal_violation or high_temperature_warning)
+        if quality != "ok":
+            temperature_alarm_level = None
+            temperature_alarm_message = f"Temperature telemetry {quality}; alarm status unknown"
+        elif thermal_violation:
+            temperature_alarm_level = "critical"
+            temperature_alarm_message = "Temperature is outside the safe 2°C to 8°C range"
+        elif high_temperature_warning:
+            temperature_alarm_level = "warning"
+            temperature_alarm_message = f"Temperature is above the {config.HIGH_TEMP_ALARM_C:g}°C early-warning threshold"
+        else:
+            temperature_alarm_level = None
+            temperature_alarm_message = "Temperature is within the configured cold-chain range"
         model_available = (self.model_available and self.bundle is not None and not self.external_mode
                            and quality == "ok" and not thermal_violation)
         probability = None
@@ -176,7 +193,7 @@ class Simulation:
             level = "Unknown"
         elif thermal_violation or (not model_available and outage_hours >= 2) or (probability is not None and probability >= max(0.5, threshold)):
             level = "Critical"
-        elif not clinic["power_on"] or outage_hours > 0 or (probability is not None and probability >= threshold):
+        elif high_temperature_warning or not clinic["power_on"] or outage_hours > 0 or (probability is not None and probability >= threshold):
             level = "Warning"
         else:
             level = "Safe"
@@ -190,6 +207,8 @@ class Simulation:
             status = "Local fault"
         elif clinic["freeze_active"]:
             status = "Freeze event"
+        elif high_temperature_warning:
+            status = "High-temperature warning"
         elif level == "Warning":
             status = "Elevated risk"
         else:
@@ -197,7 +216,13 @@ class Simulation:
         return {
             "id": clinic["id"], "name": clinic["name"], "feeder_id": clinic["feeder_id"],
             "power_on": bool(clinic["power_on"]), "local_fault": bool(clinic["local_fault"]),
-            "temperature_c": round(float(clinic["temperature_c"]), 2) if quality != "missing" else None, "too_cold": too_cold if quality == "ok" else False,
+            "temperature_c": round(float(clinic["temperature_c"]), 2) if quality != "missing" else None,
+            "too_cold": too_cold if quality == "ok" else False,
+            "too_hot": too_hot if quality == "ok" else False,
+            "temperature_alarm": temperature_alarm,
+            "temperature_alarm_level": temperature_alarm_level,
+            "temperature_alarm_threshold_c": float(config.HIGH_TEMP_ALARM_C),
+            "temperature_alarm_message": temperature_alarm_message,
             "humidity_pct": clinic["humidity_pct"] if quality != "missing" else None,
             "feeder_online": observation["feeder_online"] if not self.external_mode or clinic["feeder_id"] in self.feeder_observations else None,
             "feeder_data_quality": self._quality(feeder_observation.get("observed_at")) if self.external_mode else "ok",

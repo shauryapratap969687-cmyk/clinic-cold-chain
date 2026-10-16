@@ -30,6 +30,11 @@ rules-based safety indicators, and a simulation sandbox.
   cached Open-Meteo weather adapter, and a rules-only fallback.
 - Alert acknowledgement, recurrence, recovery and timed escalation to a
   durable **demo-log outbox**. No real SMS/email/webhook delivery is configured.
+- A visible ColdChain Live Monitor that refreshes clinic temperatures every
+  three seconds, raises a configurable early-warning alarm above 6°C, and can
+  play a browser double-beep when a clinic newly crosses the threshold. The
+  sound requires one user click to satisfy browser autoplay rules; the visual
+  alarm remains active when sound is muted or unavailable.
 - Monitoring and operator-confirmed outcomes, with no fabricated live accuracy.
 
 ## Run locally
@@ -71,6 +76,57 @@ the last saved snapshot. OpenAPI documentation is at `/docs`.
 7. Restart the server to verify snapshot/history persistence. A long idle gap
    intentionally becomes **Unknown**, not green. Advance/reset to generate fresh
    demo observations. In external mode, send fresh telemetry instead.
+
+## CodeFlow custom-code mode
+
+The browser interface also includes a safe, deterministic teaching visualizer.
+Click inside the dark editor, replace the example with your own code, choose a
+language, and click **Visualize**. Python, C, and C++ have the most detailed
+bounded simulation. JavaScript, TypeScript, Java, C#, Go, Rust, Kotlin, Swift,
+PHP, Ruby and SQL also receive a syntax-guided code-story trace. Generic mode
+does not pretend to know runtime values; it marks them unknown and explains
+that the source was not executed.
+
+The detailed simulator includes:
+
+- assignments with numbers, strings and arrays;
+- arithmetic and array indexing;
+- Python `for ... in range(...)` loops;
+- C/C++ integer `for (start; condition; increment)` loops;
+- simple `if` conditions, `break`, and `print`, `printf`, `puts`, or `cout` output.
+
+Examples:
+
+```python
+total = 0
+for i in range(3):
+    total = total + i
+print(total)
+```
+
+```cpp
+int main() {
+    int total = 0;
+    for (int i = 0; i < 3; i++) {
+        total += i;
+    }
+    std::cout << total;
+}
+```
+
+This mode is implemented by `frontend/trace-engine.js`. It enforces source,
+array, loop and trace-step limits and never runs arbitrary pasted programs. The
+rule-based narration remains available offline. A `code story · runtime
+unknown` badge is shown for syntax-guided fallback traces so the lesson stays
+honest instead of displaying made-up values.
+
+The lesson surface uses `frontend/lesson-player.js` and
+`frontend/codeflow-ui.js`. Playback is driven by one requestAnimationFrame clock:
+loop summary, condition check, body, increment, and exit are separate visual
+events. Captions are the default because browser speech synthesis can sound
+robotic; the student can opt into the installed browser voice with the voice
+button. Generated sound effects unlock only after a click, and reduced-motion
+users see highlights instead of moving elements.
 
 ## API
 

@@ -2,6 +2,6 @@
   "name": "cold-chain-demo-ui-checks",
   "private": true,
   "description": "Optional DOM regression tests only; the application needs no Node build",
-  "scripts": { "test": "node --test tests/frontend.test.cjs" },
+  "scripts": { "test": "node --test tests/frontend.test.cjs tests/codeflow_smoke.test.cjs tests/coldchain_monitor.test.cjs" },
   "devDependencies": { "jsdom": "^26.1.0" }
 }

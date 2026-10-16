@@ -3,125 +3,228 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#08131f">
-  <meta name="description" content="Synthetic cold-chain resilience control room demo">
-  <title>ColdChain / Control Room</title>
-  <link rel="stylesheet" href="/styles.css">
+  <meta name="theme-color" content="#f6f2eb">
+  <meta name="description" content="CodeFlow turns code into a calm, step-by-step visual lesson.">
+  <title>CodeFlow · See the thinking</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css?v=codeflow5">
 </head>
 <body>
-  <a class="skip-link" href="#overview">Skip to dashboard</a>
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand-block">
-        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div>
-          <p class="eyebrow">RESILIENCE LAB <span class="dot"></span> SYNTHETIC DEMO</p>
-          <h1>ColdChain <span>/ Control Room</span></h1>
-        </div>
-      </div>
-      <div class="header-status">
-        <div class="clock-wrap">
-          <span class="status-dot live" aria-hidden="true"></span>
-          <div><span class="label">SIMULATION CLOCK</span><strong id="simClock">—</strong></div>
-        </div>
-        <div class="horizon-wrap"><span class="label">FORECAST HORIZON</span><strong id="horizonValue">—</strong></div>
-        <div class="synthetic-chip"><span aria-hidden="true">✦</span> HACKATHON / NONMEDICAL</div>
+      <a class="brand" href="#top" aria-label="CodeFlow home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><strong>codeflow</strong><small>see the thinking</small></span>
+      </a>
+      <nav class="primary-nav" aria-label="Main navigation">
+        <a class="active" href="#learn">Learn</a>
+        <a href="#coldchain-monitor">ColdChain live</a>
+        <a href="#trace">My traces <span class="nav-count">3</span></a>
+        <a href="#patterns">Patterns</a>
+      </nav>
+      <div class="top-actions">
+        <button class="icon-btn" id="themeButton" type="button" aria-label="Toggle color theme" title="Toggle theme">☼</button>
+        <span class="streak"><span class="streak-flame">✦</span> 4 day streak</span>
+        <button class="avatar" type="button" aria-label="Open profile">AK</button>
       </div>
     </header>
 
-    <nav class="section-nav" aria-label="Dashboard sections" id="sectionNav" hidden><a href="#overview" aria-current="location">Overview</a><a href="#operations">Operations</a><a href="#insights">Insights</a><a href="#readiness">Readiness</a><span id="sessionIdentity"></span><button id="logoutButton" class="btn btn-secondary">Sign out</button></nav>
-    <section id="authPanel" class="auth-panel" aria-labelledby="authHeading">
-      <p class="section-kicker">SECURE WORKSPACE</p><h2 id="authHeading">Connect to your control room</h2>
-      <p id="authStatus" role="status">Checking authentication configuration…</p>
-      <form id="loginForm" hidden><label for="username">Username</label><input id="username" name="username" autocomplete="username" required maxlength="128"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required><button class="btn btn-primary" type="submit" id="loginButton">Sign in</button></form>
-      <div class="button-row"><button id="demoEnter" class="btn btn-primary" hidden>Enter local demo</button><button id="retryAuth" class="btn btn-secondary" hidden>Retry connection</button></div>
-      <p class="muted">Session credentials stay in memory and clear when you sign out or reload.</p>
-    </section>
-    <main class="main-content" id="dashboard" hidden>
-      <div class="connection-banner" role="status"><span id="connectionStatus">Connecting…</span><div class="button-row"><button id="refreshButton" class="btn btn-secondary">Refresh state</button><button id="optionalSignIn" class="btn btn-ghost" hidden>Sign in with an account</button></div></div>
-      <section class="intro-row" id="overview" aria-labelledby="pageTitle">
+    <main id="top" class="page" tabindex="-1">
+      <section class="hero" id="learn">
         <div>
-          <p class="section-kicker">COLD-CHAIN OPERATIONS / DEMONSTRATION</p>
-          <h2 id="pageTitle">Power &amp; temperature, at a glance.</h2>
-          <p class="intro-copy">Monitor simulated feeder resilience and six-hour risk forecasts across the network.</p>
+          <p class="eyebrow"><span class="eyebrow-dot"></span> YOUR CODE, SLOWLY</p>
+          <h1>Understand the <em>why.</em></h1>
+          <p class="hero-copy">Paste a solution. We turn each line into a tiny, visual lesson you can pause, replay, and explain in your own words.</p>
         </div>
-        <div class="last-updated" aria-live="polite"><span class="pulse-ring"></span> LAST SYNC <strong id="lastSync">Waiting for state…</strong></div>
-      </section>
-
-      <div id="globalError" class="alert error" role="alert" hidden>
-        <span class="alert-icon" aria-hidden="true">!</span><div><strong id="errorTitle">Connection issue</strong><p id="errorMessage"></p></div><button class="icon-button" id="dismissError" aria-label="Dismiss error">×</button>
-      </div>
-      <div id="loadingState" class="loading-banner" role="status"><span class="spinner"></span> Connecting to simulation state…</div>
-
-      <section class="summary-grid" aria-label="Network summary">
-        <article class="summary-card accent-teal"><div class="card-top"><span class="card-label">CLINICS POWERED</span><span class="card-icon">⌁</span></div><div class="metric-line"><strong id="poweredClinics">—</strong><span class="metric-denom">/ <span id="totalClinics">—</span></span></div><p id="poweredSub">Awaiting live state</p><div class="progress"><span id="poweredProgress"></span></div></article>
-        <article class="summary-card accent-blue"><div class="card-top"><span class="card-label">ACTIVE FEEDERS</span><span class="card-icon">◈</span></div><div class="metric-line"><strong id="activeFeeders">—</strong><span class="metric-denom">/ <span id="totalFeeders">—</span></span></div><p id="feederSub">Network availability</p><div class="progress"><span id="feederProgress"></span></div></article>
-        <article class="summary-card accent-orange"><div class="card-top"><span class="card-label">SYSTEM HEALTH</span><span class="card-icon">◉</span></div><div class="health-line"><span id="healthDot" class="health-dot"></span><strong id="systemHealth">—</strong></div><p id="healthSub">Risk posture from live state</p><div class="health-track"><span id="healthTrack"></span></div></article>
-        <article class="summary-card accent-red"><div class="card-top"><span class="card-label">HIGH RISK CLINICS</span><span class="card-icon">△</span></div><div class="metric-line"><strong id="criticalClinics">—</strong><span class="metric-denom">critical</span></div><p id="riskSub">Warning: —</p><div class="risk-bars"><span id="criticalBar"></span><span id="warningBar"></span><span class="risk-rest"></span></div></article>
-      </section>
-
-      <section class="section-block" aria-labelledby="feederHeading">
-        <div class="section-heading"><div><p class="section-kicker">NETWORK TOPOLOGY</p><h3 id="feederHeading">Feeder status</h3></div><div class="legend" aria-label="Feeder status legend"><span><i class="legend-dot online"></i> Online</span><span><i class="legend-dot offline"></i> Offline</span></div></div>
-        <div id="feederGrid" class="feeder-grid"><div class="empty-state">Loading feeder topology…</div></div>
-      </section>
-
-      <section class="section-block" id="operations" aria-labelledby="operationsHeading">
-        <div class="section-heading"><div><p class="section-kicker">RESPOND WITH CONTEXT</p><h3 id="operationsHeading">Operations workspace</h3></div><span class="badge warning">Demo-log notifications · no real SMS</span></div>
-        <div class="operations-grid">
-          <article class="ops-card alerts-card"><h4>Alert queue</h4><p class="muted">Acknowledgement records ownership. It does not resolve the underlying hazard.</p><p class="panel-status" id="alertsStatus" role="status">Waiting for alerts…</p><div id="alertsList" class="skeleton-block">Loading alert queue…</div></article>
-          <article class="ops-card"><h4>Telemetry &amp; ingestion</h4><div id="telemetryContent">Awaiting source information.</div><p class="muted">Scenario controls generate simulated readings. External clinic and feeder telemetry enters through the ingestion API; ingestion is not evidence that physical sensors are connected.</p></article>
-          <article class="ops-card"><h4>Weather context</h4><p class="panel-status" id="weatherStatus" role="status">Waiting for weather…</p><div id="weatherContent" class="skeleton-block">Loading weather context…</div><p class="muted">Provider weather is operational context, not the synthetic training features shown in the clinic register.</p></article>
-        </div>
-      </section>
-      <section class="section-block simulation-section" aria-labelledby="simulationHeading">
-        <div class="section-heading"><div><p class="section-kicker">SCENARIO CONTROLS</p><h3 id="simulationHeading">Run a controlled simulation</h3></div><span class="lock-note" id="busyNote"><span aria-hidden="true">⌘</span> Actions serialize to protect state</span></div>
-        <div class="controls-card">
-          <div class="control-cluster"><label for="feederSelect">Target feeder</label><select id="feederSelect" data-action-control></select><div class="button-row"><button class="btn btn-danger" id="tripFeeder" data-action-control><span>⊗</span> Trip feeder</button><button class="btn btn-secondary" id="restoreFeeder" data-action-control><span>↻</span> Restore feeder</button></div></div>
-          <div class="control-divider"></div>
-          <div class="control-cluster"><label for="clinicSelect">Target clinic</label><select id="clinicSelect" data-action-control></select><div class="button-row"><button class="btn btn-warning" id="localFault" data-action-control><span>⚡</span> Local fault</button><button class="btn btn-secondary" id="restoreClinic" data-action-control><span>↻</span> Restore clinic</button><button class="btn btn-blue" id="freezeClinic" data-action-control><span>❄</span> Freeze clinic</button></div></div>
-          <div class="control-divider"></div>
-          <div class="control-cluster time-controls"><label>Advance simulation</label><div class="button-row"><button class="btn btn-ghost" id="advance1" data-action-control>+1 hour</button><button class="btn btn-ghost" id="advance6" data-action-control>+6 hours</button><button class="btn btn-reset" id="resetSimulation" data-action-control>Reset</button></div><small>Temperature evolves over simulated time.</small></div>
+        <div class="hero-meta">
+          <div class="meta-pill"><span class="status-dot"></span> Offline fallback ready</div>
+          <div class="meta-pill">Python · Simple mode</div>
         </div>
       </section>
 
-      <section class="section-block clinic-section" aria-labelledby="clinicHeading">
-        <div class="section-heading table-heading"><div><p class="section-kicker">LIVE INVENTORY</p><h3 id="clinicHeading">Clinic risk register</h3></div><div class="table-tools"><label class="search-box"><span aria-hidden="true">⌕</span><input id="clinicSearch" type="search" placeholder="Search clinic or ID" aria-label="Search clinic or ID"></label><label class="sr-only" for="riskFilter">Risk filter</label><select id="riskFilter"><option value="all">All risk</option><option value="Critical">Critical</option><option value="Warning">Warning</option><option value="Safe">Safe</option></select><label class="sr-only" for="feederFilter">Feeder filter</label><select id="feederFilter"><option value="all">All feeders</option></select></div></div>
-        <div class="table-scroll"><table><caption class="sr-only">Live clinic power, temperature, weather and calibrated six-hour risk</caption><thead><tr><th scope="col">Clinic</th><th scope="col">Feeder</th><th scope="col">Power</th><th scope="col">Temp</th><th scope="col">Next 6h forecast</th><th scope="col">Calibrated risk</th></tr></thead><tbody id="clinicTableBody"><tr><td colspan="6" class="empty-cell">Loading live clinic register…</td></tr></tbody></table></div><div id="tableSummary" class="table-summary">—</div>
-      </section>
-
-      <section class="section-block model-section" id="insights" aria-labelledby="modelHeading">
-        <div class="section-heading"><div><p class="section-kicker">MODEL TRANSPARENCY</p><h3 id="modelHeading">Forecast model insights</h3></div><span class="model-status" id="modelStatus">Loading model profile…</span></div>
-        <div id="modelUnavailable" class="model-unavailable" hidden>Model profile is not ready. Live operations remain available.</div>
-        <div id="modelContent">
-          <div class="model-meta"><div><span class="label">MODEL</span><strong id="modelName">—</strong></div><div><span class="label">HORIZON</span><strong id="modelHorizon">—</strong></div><div><span class="label">DATASET</span><strong id="datasetInfo">—</strong></div><div><span class="label">POSITIVE RATE</span><strong id="positiveRate">—</strong></div></div>
-          <div class="model-grid">
-            <article class="insight-card metrics-card"><div class="insight-title"><h4>Held-out TEST metrics</h4></div><p class="muted">Synthetic test performance is not clinical validation.</p><div class="metric-tiles"><div><span>PR-AUC</span><strong id="prAuc">—</strong></div><div><span>F2 SCORE</span><strong id="f2Score">—</strong></div><div><span>BRIER</span><strong id="brierScore">—</strong></div><div><span>ROC-AUC</span><strong id="rocAuc">—</strong></div><div><span>THRESHOLD</span><strong id="threshold">—</strong></div><div><span>PREVALENCE</span><strong id="prevalence">—</strong></div></div></article>
-            <article class="insight-card chart-card"><div class="insight-title"><div><h4>Reliability curve</h4><p>Observed outcome vs predicted probability</p></div><span class="chart-legend"><i class="line-key teal"></i> Observed <i class="line-key ideal"></i> Ideal</span></div><div class="chart-frame"><canvas id="reliabilityChart" role="img" aria-label="Reliability curve chart showing observed outcome by predicted probability"></canvas></div><div class="axis-labels"><span>0%</span><span>Predicted probability</span><span>100%</span></div></article>
-            <article class="insight-card chart-card"><div class="insight-title"><div><h4>Confusion matrix</h4><p>Test set at operating threshold</p></div></div><div class="matrix-wrap"><div class="matrix-axis y-axis">ACTUAL</div><div class="matrix"><div class="matrix-corner"></div><div class="matrix-head">Pred. safe</div><div class="matrix-head">Pred. risk</div><div class="matrix-label">Safe</div><div class="matrix-cell tn" id="matrixTn">—</div><div class="matrix-cell fp" id="matrixFp">—</div><div class="matrix-label">At risk</div><div class="matrix-cell fn" id="matrixFn">—</div><div class="matrix-cell tp" id="matrixTp">—</div><div class="matrix-foot">NEGATIVE</div><div class="matrix-foot">POSITIVE</div></div></div><div class="matrix-legend"><span><i class="swatch tn"></i> Correct safe</span><span><i class="swatch tp"></i> Correct risk</span><span><i class="swatch fp"></i> False alarm</span></div></article>
-            <article class="insight-card chart-card"><div class="insight-title"><div><h4>ROC curve</h4><p>Discrimination across thresholds</p></div><span class="chart-legend"><i class="line-key orange"></i> ROC <i class="line-key ideal"></i> Chance</span></div><div class="chart-frame"><canvas id="rocChart" role="img" aria-label="ROC curve chart showing true positive rate by false positive rate"></canvas></div><div class="axis-labels"><span>0%</span><span>False positive rate</span><span>100%</span></div></article>
-            <article class="insight-card feature-card"><div class="insight-title"><div><h4>Feature importance · gain</h4><p>Sorted by model split gain. Association, not a causal explanation.</p></div></div><div id="featureImportance" class="importance-list"><div class="empty-state">Loading features…</div></div></article>
+      <section class="coldchain-monitor" id="coldchain-monitor" aria-labelledby="coldchain-monitor-title">
+        <div class="cc-monitor-heading">
+          <div>
+            <p class="eyebrow"><span class="eyebrow-dot"></span> LIVE TELEMETRY</p>
+            <h2 id="coldchain-monitor-title">ColdChain Live Monitor</h2>
+            <p class="cc-monitor-copy">A compact view of every clinic, its feeder, and the temperature signals that need attention.</p>
           </div>
-          <div id="modelNotes" class="model-notes" hidden><strong>Model notes</strong><ul></ul></div>
+          <div class="cc-monitor-meta" aria-label="Monitor settings">
+            <span class="cc-meta-chip">Refreshes every 3s</span>
+            <span class="cc-meta-chip cc-threshold-chip">Temperature alarm &gt;6°C</span>
+          </div>
+        </div>
+
+        <div class="cc-alarm-banner" id="cc-alarm-banner" hidden role="alert" aria-live="assertive">
+          <span class="cc-alarm-icon" aria-hidden="true">!</span>
+          <div>
+            <strong id="cc-alarm-title">Temperature alarm</strong>
+            <p id="cc-alarm-detail">No active temperature alarms.</p>
+          </div>
+        </div>
+
+        <div class="cc-summary-grid" aria-label="ColdChain summary">
+          <article class="cc-stat-card">
+            <span class="cc-stat-label">NETWORK HEALTH</span>
+            <strong id="cc-network-health">Waiting…</strong>
+            <small id="cc-network-detail">Waiting for live state</small>
+          </article>
+          <article class="cc-stat-card">
+            <span class="cc-stat-label">CLINICS ONLINE</span>
+            <strong><span id="cc-clinics-online">—</span><small class="cc-stat-total"> / <span id="cc-clinics-total">20</span></small></strong>
+            <small id="cc-clinics-detail">Power status unavailable</small>
+          </article>
+          <article class="cc-stat-card cc-threshold-card">
+            <span class="cc-stat-label">ALARM THRESHOLD</span>
+            <strong>&gt;6°C</strong>
+            <small id="cc-threshold-detail">Hot readings are highlighted</small>
+          </article>
+          <article class="cc-stat-card">
+            <span class="cc-stat-label">LAST UPDATE</span>
+            <strong id="cc-last-update">Waiting…</strong>
+            <small id="cc-refresh-detail">No state received yet</small>
+          </article>
+        </div>
+
+        <div class="cc-monitor-toolbar">
+          <div class="cc-connection-state" aria-live="polite">
+            <span class="cc-connection-dot waiting" id="cc-connection-dot" aria-hidden="true"></span>
+            <div>
+              <strong id="cc-connection-label">Waiting for API</strong>
+              <small id="cc-connection-detail">The monitor starts when this section is visible.</small>
+            </div>
+          </div>
+          <div class="cc-monitor-controls" aria-label="Simulation controls">
+            <button class="cc-control-button cc-control-primary" id="cc-trip-feeder" type="button">Trip feeder 3</button>
+            <button class="cc-control-button" id="cc-advance-1" type="button">Advance 1 hour</button>
+            <button class="cc-control-button" id="cc-advance-6" type="button">Advance 6 hours</button>
+            <button class="cc-control-button cc-control-reset" id="cc-reset" type="button">Reset</button>
+            <button class="cc-control-button cc-sound-button" id="cc-sound-toggle" type="button" aria-pressed="false">Enable alarm sound</button>
+          </div>
+        </div>
+        <div class="cc-control-feedback" aria-live="polite">
+          <span id="cc-action-status">Simulation controls are ready when live state is available.</span>
+          <span id="cc-sound-status">Sound locked · visual alarms remain on</span>
+        </div>
+        <p class="cc-simulation-note"><strong>Simulation / telemetry refresh only.</strong> This monitor does not trigger a hardware alarm. Sound is optional and may be blocked by browser autoplay policy.</p>
+
+        <div class="cc-clinics-heading">
+          <div>
+            <span class="cc-section-kicker">CLINIC REGISTER</span>
+            <h3>All connected clinics</h3>
+          </div>
+          <span class="cc-clinic-count" id="cc-clinic-count">0 / 20 clinics</span>
+        </div>
+        <div class="cc-clinic-grid" id="cc-clinic-grid" role="list" aria-live="polite" aria-label="Live clinic temperature cards">
+          <div class="cc-empty-state" id="cc-clinic-empty">Waiting for live clinic data…</div>
         </div>
       </section>
 
-      <section class="section-block" aria-labelledby="monitorHeading">
-        <div class="section-heading"><div><p class="section-kicker">MEASURE, THEN LEARN</p><h3 id="monitorHeading">Monitoring &amp; human feedback</h3></div></div>
-        <p id="monitoringStatus" class="panel-status" role="status">Waiting for monitoring…</p><div id="monitoringContent" class="ops-card skeleton-block">Loading monitoring…</div>
-        <form id="feedbackForm" class="ops-card feedback-form" hidden>
-          <h4>Record a confirmed outcome</h4><p class="muted">Submit only human-confirmed outcomes. These records support later evaluation; they do not establish clinical validity.</p>
-          <label for="predictionSelect">Recent prediction</label><select id="predictionSelect" required data-feedback-control></select>
-          <label for="actualOutcome">Observed outcome</label><select id="actualOutcome" required data-feedback-control><option value="">Select confirmed outcome</option><option value="true">Cold-chain breach occurred</option><option value="false">No cold-chain breach occurred</option></select>
-          <label for="feedbackNotes">Confirmation notes</label><textarea id="feedbackNotes" rows="3" maxlength="2000" data-feedback-control placeholder="Evidence and observation context"></textarea>
-          <button id="feedbackSubmit" class="btn btn-primary" data-feedback-control>Save confirmed outcome</button><p id="feedbackStatus" role="status"></p>
-        </form>
+      <section class="workspace" id="trace" aria-label="CodeFlow learning workspace">
+        <aside class="left-rail">
+          <div class="panel-head">
+            <div><span class="kicker">01 · WRITE</span><h2>Start with code</h2></div>
+            <button class="text-btn" id="resetCode" type="button">Reset</button>
+          </div>
+          <div class="editor-wrap">
+            <div class="editor-toolbar"><span class="file-tab"><span class="python-dot"></span> two_sum.py</span><span class="editor-lock">● saved locally</span></div>
+            <div class="code-editor" id="codeEditor" role="textbox" aria-label="Code editor" contenteditable="true" spellcheck="false" tabindex="0"></div>
+          </div>
+          <div class="editor-footer">
+            <label for="languageSelect">Language <select id="languageSelect"><option>Python</option><option>C++</option><option>C</option><option>JavaScript</option><option>TypeScript</option><option>Java</option><option>C#</option><option>Go</option><option>Rust</option><option>Kotlin</option><option>Swift</option><option>PHP</option><option>Ruby</option><option>SQL</option></select></label>
+            <button class="run-btn" id="visualizeButton" type="button"><span>Visualize</span><b>⌘ ↵</b></button>
+          </div>
+          <div class="recent-block">
+            <div class="subhead"><span>RECENT TRACES</span><button class="dots-btn" type="button" aria-label="More recent traces">•••</button></div>
+            <button class="recent-item selected" type="button"><span class="recent-icon purple">⌁</span><span><strong>Two Sum · hash map</strong><small>just now · 12 steps</small></span><span class="arrow">↗</span></button>
+            <button class="recent-item" type="button"><span class="recent-icon peach">↔</span><span><strong>Sliding window</strong><small>yesterday · 28 steps</small></span><span class="arrow">↗</span></button>
+          </div>
+        </aside>
+
+        <section class="visual-column" aria-label="Execution visualizer">
+          <div class="panel-head stage-head">
+            <div><span class="kicker">02 · WATCH IT MOVE</span><h2>Execution stage <span class="live-chip"><i></i> live</span></h2></div>
+            <div class="stage-tools"><button class="small-pill" id="predictionButton" type="button">⌁ Prediction mode</button><button class="small-icon" id="fullscreenButton" type="button" aria-label="Focus stage">⤢</button></div>
+          </div>
+          <div class="stage-card" id="stageCard">
+            <div class="stage-topline"><span id="stepLabel">Step 01 <b>/ 12</b></span><span id="stageHint">Creating the lookup box</span><span class="trace-mode-badge verified" id="traceModeBadge">verified trace</span></div>
+            <div class="stage-scene" id="stageScene">
+              <div class="scene-label">INPUT ARRAY</div>
+              <div class="array-row" id="arrayVisual" aria-label="Input array"></div>
+              <div class="pointer-row" id="pointerVisual"></div>
+              <div class="loop-board" id="loopBoard" hidden>
+                <div class="loop-board-head"><span class="scene-label">LOOP CAMERA</span><span class="loop-round-count" id="loopRoundCount">—</span></div>
+                <div class="loop-track" id="loopTrack"><div class="loop-ticks" id="loopTicks"></div><div class="loop-token" id="loopToken">i = 0</div></div>
+                <div class="condition-row"><span class="condition-label">CHECK</span><code id="conditionText">i &lt; 3</code><span class="condition-result" id="conditionResult">waiting</span></div>
+                <div class="loop-action" id="loopAction">The loop is getting ready.</div>
+              </div>
+              <div class="teacher-script" id="teacherScript"><span class="teacher-label">TEACHER VIEW</span><strong id="teacherText">First, we set up the values. Then the loop will check one round at a time.</strong></div>
+              <div class="value-travel" id="valueTravel" aria-hidden="true"><span></span></div>
+              <div class="scene-divider"></div>
+              <div class="memory-layout">
+                <div class="memory-block variable-block"><span class="scene-label">VARIABLES</span><div id="variableVisual" class="variable-list"></div></div>
+                <div class="memory-block map-block"><span class="scene-label">LOOKUP MAP</span><div id="mapVisual" class="map-list"></div></div>
+              </div>
+              <div class="travel-line" aria-hidden="true"><span class="travel-dot"></span><span class="travel-path"></span></div>
+              <div class="scene-caption" id="sceneCaption">We are getting ready to look through the numbers.</div>
+            </div>
+            <div class="timeline-wrap"><div class="timeline-labels"><span>start</span><span id="timelinePercent">0% complete</span><span>finish</span></div><div class="timeline" id="timeline" role="slider" aria-label="Execution progress" aria-valuemin="0" aria-valuemax="11" aria-valuenow="0" tabindex="0"><span class="timeline-fill"></span><span class="timeline-thumb"></span><span class="timeline-dots"></span></div></div>
+          </div>
+          <div class="concept-strip" id="conceptStrip"><div class="concept-mark">?</div><div><span class="kicker">CONCEPT CARD · FIRST LOOK</span><strong>A variable is a labeled box.</strong><p>It holds one value so we can use it again later.</p></div><button class="close-concept" id="closeConcept" type="button" aria-label="Close concept card">×</button></div>
+          <div class="step-recap"><span class="recap-icon">↳</span><span><strong id="roundLabel">Before the loop</strong><span id="roundRecap"> We will check each number one by one.</span></span></div>
+        </section>
+
+        <aside class="explain-column" aria-label="Step explanation">
+          <div class="panel-head explanation-head"><div><span class="kicker">03 · MAKE IT CLICK</span><h2>Step explanation</h2></div><span class="cache-badge"><i></i> cached</span></div>
+          <div class="explain-scroll">
+            <div class="line-quote"><span class="line-number" id="activeLineNumber">04</span><code id="activeLineCode">for value in numbers:</code></div>
+            <div class="explain-intro"><span class="speaker-orb">◖</span><div><strong id="explainTitle">A loop is checking each number.</strong><small id="explainLevelLabel">Simple explanation · English</small></div></div>
+            <div class="explain-grid" id="explainGrid">
+              <article class="explain-card what"><span class="card-question">WHAT?</span><p id="whatText">This line starts a loop. A loop repeats the indented lines for each item.</p></article>
+              <article class="explain-card changed"><span class="card-question">WHAT CHANGED?</span><p id="changedText">Nothing yet. The loop is about to choose its first number.</p></article>
+              <article class="explain-card why"><span class="card-question">WHY?</span><p id="whyText">There are 4 numbers to check, so we do not need to guess. We can look at them one at a time.</p></article>
+              <article class="explain-card next"><span class="card-question">WHAT HAPPENS NEXT?</span><p id="nextText">The loop picks 2 and moves to the next line.</p></article>
+            </div>
+            <button class="concept-link" id="conceptLink" type="button"><span>?</span> Loop <small>like checking every drawer in a cabinet</small><b>⌄</b></button>
+            <div class="explain-actions"><button id="repeatButton" type="button" class="outline-btn">↻ Repeat this step</button><button id="differentButton" type="button" class="outline-btn">✦ Explain differently</button></div>
+            <div class="caption-box"><span class="caption-icon">◒</span><div><span class="kicker">CAPTIONS · ALWAYS ON</span><p id="captionText">This line starts a loop. A loop repeats the indented lines for each item.</p></div></div>
+          </div>
+          <div class="language-row"><label for="levelSelect">Level <select id="levelSelect"><option value="simple">Simple</option><option value="normal">Normal</option><option value="technical">Technical</option></select></label><label for="narrationLanguage">Narrate in <select id="narrationLanguage"><option>English</option><option>Hindi</option><option>Hinglish</option></select></label><label for="voiceSelect">Voice <select id="voiceSelect"><option value="">Browser voice</option></select></label></div>
+        </aside>
       </section>
-      <section class="section-block" id="readiness" aria-labelledby="readinessHeading"><div class="section-heading"><div><p class="section-kicker">BOUNDARIES &amp; SAFEGUARDS</p><h3 id="readinessHeading">Readiness, with evidence</h3></div><span class="badge warning">Not clinically validated</span></div><div class="readiness-callout"><h4>Qualified signoff is required before clinical use.</h4><p>This is a nonmedical demonstration. Clinical validation, hardware commissioning and real notification delivery are separate work. Default hardware and notification integrations are not connected. No certification or production-readiness claim is made.</p></div><p id="policyStatus" class="panel-status" role="status">Waiting for safety policy…</p><div id="policyContent" class="ops-card skeleton-block">Loading deterministic safeguards…</div></section>
-      <section class="section-block" id="auditSection" hidden aria-labelledby="auditHeading"><div class="section-heading"><div><p class="section-kicker">ACCOUNTABILITY</p><h3 id="auditHeading">Audit trail</h3></div><span class="badge">Admin &amp; auditor access</span></div><p id="auditStatus" class="panel-status" role="status">Waiting for audit…</p><div id="auditContent" class="ops-card">Loading audit entries…</div></section>
-      <footer class="footer"><span><span class="footer-mark">✦</span> ColdChain Resilience Lab</span><span>Demonstration only. Sources are labelled in the workspace. Observed temperature violations remain independent of model forecasts.</span></footer>
+
+      <section class="lesson-summary" id="patterns">
+        <div class="summary-intro"><span class="kicker">AFTER THE LAST STEP</span><h2>You can now tell the story.</h2><p>Every trace ends with a small recap, a real bug example, and a pattern you can reuse.</p></div>
+        <article class="summary-card"><div class="summary-card-head"><span class="summary-icon mint">✓</span><span class="kicker">WHAT THIS PROGRAM DID</span></div><p id="programSummary">The program looked through the numbers, remembered where each one was, and stopped when it found two numbers that add up to the target.</p><div class="summary-footer"><span class="pattern-tag">Pattern · Hash map</span><span class="complexity">Usually O(n) <button type="button" id="complexityInfo" aria-label="Explain complexity">?</button></span></div></article>
+        <article class="summary-card break-card"><div class="summary-card-head"><span class="summary-icon coral">!</span><span class="kicker">WHAT WOULD BREAK THIS?</span></div><p id="breakSummary">Try <code>numbers = [3]</code> and <code>target = 20</code>. No pair exists, so the program reaches the end without printing an answer.</p><button class="text-btn" id="tryBugButton" type="button">Try the bug example ↗</button></article>
+      </section>
     </main>
+
+    <footer class="player-dock" aria-label="Playback controls">
+       <div class="dock-inner">
+        <div class="dock-title"><span class="now-playing">NOW PLAYING</span><strong id="dockStepTitle">Step 01 · Setup</strong><small id="dockStatus">Click play to hear the lesson</small></div>
+        <div class="transport"><button id="backButton" class="transport-btn" type="button" aria-label="Previous step">◀</button><button id="playButton" class="play-btn" type="button" aria-label="Play lesson">▶</button><button id="nextButton" class="transport-btn" type="button" aria-label="Next step">▶</button></div>
+        <div class="dock-progress"><span id="dockProgressText">01 / 12</span><input id="progressSlider" type="range" min="0" max="11" value="0" aria-label="Step progress"><span id="dockTime">0:00</span></div>
+        <div class="sound-controls"><button id="micButton" class="sound-btn" type="button" aria-label="Start voice commands">♩</button><span id="voiceStatus" class="voice-status">voice off · captions on</span><label class="volume-control" for="voiceVolume"><span>voice</span><input id="voiceVolume" type="range" min="0" max="1" step="0.05" value="0.9"></label><button id="voiceMute" class="sound-btn" type="button" aria-label="Turn browser voice on">◖</button><label class="volume-control effects-volume" for="effectsVolume"><span>fx</span><input id="effectsVolume" type="range" min="0" max="1" step="0.05" value="0.45"></label><button id="effectsMute" class="sound-btn" type="button" aria-label="Mute sound effects">⌁</button><label class="speed-control" for="speedSlider"><span>speed</span><input id="speedSlider" type="range" min="0.35" max="1.6" step="0.05" value="0.65"><b id="speedValue">0.7×</b></label><button id="helpButton" class="help-btn" type="button" aria-label="Open keyboard shortcuts">?</button></div>
+      </div>
+    </footer>
   </div>
-  <div id="toastRegion" class="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
-  <script src="/app.js" defer></script>
+
+  <div class="prediction-modal" id="predictionModal" hidden role="dialog" aria-modal="true" aria-labelledby="predictionTitle"><div class="modal-card"><button class="modal-close" id="closePrediction" type="button" aria-label="Close prediction mode">×</button><span class="modal-eyebrow">PAUSE &amp; PREDICT</span><h2 id="predictionTitle">What will <code>total</code> be?</h2><p id="predictionPrompt">Pick the value after this line runs. A guess is part of learning.</p><div class="prediction-options" id="predictionOptions"></div><p class="prediction-feedback" id="predictionFeedback" role="status"></p></div></div>
+  <div class="help-modal" id="helpModal" hidden role="dialog" aria-modal="true" aria-labelledby="helpTitle"><div class="modal-card"><button class="modal-close" id="closeHelp" type="button" aria-label="Close shortcuts">×</button><span class="modal-eyebrow">QUICK CONTROLS</span><h2 id="helpTitle">Keep your hands on the keyboard.</h2><div class="shortcut-list"><span><kbd>Space</kbd> play / pause</span><span><kbd>←</kbd> <kbd>→</kbd> step back / next</span><span><kbd>R</kbd> repeat the current explanation</span><span><kbd>M</kbd> mute narration</span></div></div></div>
+
+  <!-- Kept as an offscreen compatibility bridge for the existing demo API smoke tests. -->
+  <div id="legacy-compat" hidden aria-hidden="true">
+    <div id="authPanel"><p id="authStatus"></p><form id="loginForm"><input id="username"><input id="password"><button id="loginButton"></button></form><button id="demoEnter"></button><button id="retryAuth"></button></div>
+    <nav id="sectionNav"><span id="sessionIdentity"></span><button id="logoutButton"></button></nav>
+    <main id="dashboard" hidden><span id="connectionStatus"></span><button id="refreshButton"></button><button id="optionalSignIn"></button><span id="simClock"></span><span id="horizonValue"></span><span id="lastSync"></span><div id="globalError" hidden><strong id="errorTitle"></strong><span id="errorMessage"></span><button id="dismissError"></button></div><div id="loadingState"></div><span id="poweredClinics"></span><span id="totalClinics"></span><span id="poweredSub"></span><span id="poweredProgress"></span><span id="activeFeeders"></span><span id="totalFeeders"></span><span id="feederSub"></span><span id="feederProgress"></span><span id="systemHealth"></span><span id="healthSub"></span><span id="healthDot"></span><span id="healthTrack"></span><span id="criticalClinics"></span><span id="riskSub"></span><span id="criticalBar"></span><span id="warningBar"></span><div id="feederGrid"></div><select id="feederSelect" data-action-control></select><select id="clinicSelect" data-action-control></select><select id="feederFilter"><option value="all">All feeders</option></select><select id="riskFilter"><option value="all">All risk</option><option value="Critical">Critical</option><option value="Warning">Warning</option><option value="Safe">Safe</option></select><input id="clinicSearch"><div class="table-scroll"><table><thead><tr><th></th><th></th><th></th><th></th><th></th><th></th></tr></thead><tbody id="clinicTableBody"></tbody></table></div><span id="tableSummary"></span><button id="tripFeeder" data-action-control></button><button id="restoreFeeder" data-action-control></button><button id="localFault" data-action-control></button><button id="restoreClinic" data-action-control></button><button id="freezeClinic" data-action-control></button><button id="advance1" data-action-control></button><button id="advance6" data-action-control></button><button id="resetSimulation" data-action-control></button><span id="modelStatus"></span><div id="modelUnavailable"></div><div id="modelContent"></div><span id="modelName"></span><span id="modelHorizon"></span><span id="datasetInfo"></span><span id="positiveRate"></span><span id="prAuc"></span><span id="f2Score"></span><span id="brierScore"></span><span id="rocAuc"></span><span id="threshold"></span><span id="prevalence"></span><canvas id="reliabilityChart"></canvas><canvas id="rocChart"></canvas><span id="matrixTn"></span><span id="matrixFp"></span><span id="matrixFn"></span><span id="matrixTp"></span><div id="featureImportance"></div><div id="modelNotes"><ul></ul></div><span id="alertsStatus"></span><div id="alertsList"></div><div id="telemetryContent"></div><span id="weatherStatus"></span><div id="weatherContent"></div><span id="monitoringStatus"></span><div id="monitoringContent"></div><form id="feedbackForm"><select id="predictionSelect"></select><select id="actualOutcome"></select><textarea id="feedbackNotes"></textarea><button id="feedbackSubmit"></button><span id="feedbackStatus"></span></form><span id="policyStatus"></span><div id="policyContent"></div><section id="auditSection" hidden><span id="auditStatus"></span><div id="auditContent"></div></section><span id="busyNote"></span></main><div id="toastRegion"></div>
+  </div>
+  <script src="/trace-engine.js?v=codeflow5" defer></script>
+   <script src="/lesson-player.js?v=codeflow5" defer></script>
+   <script src="/codeflow-ui.js?v=codeflow5" defer></script>
+   <script src="/app.js?v=codeflow5" defer></script>
+   <script src="/coldchain-monitor.js?v=codeflow5" defer></script>
 </body>
 </html>
