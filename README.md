@@ -32,8 +32,8 @@ rules-based safety indicators, and a simulation sandbox.
   durable **demo-log outbox**. No real SMS/email/webhook delivery is configured.
 - A dashboard temperature safeguard that polls live state every three seconds,
   marks fresh readings above the configurable 6°C early-warning threshold,
-  records durable alerts, and can play a browser double-beep after the operator
-  enables sound. The browser alarm is not a hardware alarm.
+  records durable alerts, and can play an operator-enabled browser double-beep.
+  The browser alarm is not a hardware alarm.
 - Monitoring and operator-confirmed outcomes, with no fabricated live accuracy.
 
 ## Run locally
@@ -75,6 +75,39 @@ the last saved snapshot. OpenAPI documentation is at `/docs`.
 7. Restart the server to verify snapshot/history persistence. A long idle gap
    intentionally becomes **Unknown**, not green. Advance/reset to generate fresh
    demo observations. In external mode, send fresh telemetry instead.
+
+## Temperature alarm behavior
+
+The dashboard's thermal safeguard is intentionally separate from the model
+forecast. It uses fresh clinic readings and deterministic policy thresholds:
+
+| Condition | Dashboard state | Alarm level |
+|---|---|---|
+| Fresh temperature above `COLDCHAIN_HIGH_TEMP_ALARM_C` (default `6°C`) | Warning | Warning |
+| Fresh temperature above `8°C` or below `2°C` | Critical | Critical |
+| Fresh feeder/clinic outage | Warning | Operational warning |
+| Missing or stale temperature/power data | Unknown | No fresh temperature alarm |
+
+The system-health card derives its current posture from fresh clinic and feeder
+conditions, so a shared feeder trip can move the system from **Healthy** to
+**Warning**, and sustained warming can move it to **Critical**. A fresh
+temperature crossing creates a durable alert and is shown in the temperature
+alarm panel.
+
+Sound is opt-in because browsers require a user gesture for Web Audio. Click
+**Enable alarm sound** once in the dashboard to hear a confirmation double-beep;
+newly detected threshold crossings then play the same double-beep. Visual alarm
+state remains authoritative if audio is unavailable or muted. These readings are
+synthetic/API demo data and are not an independent refrigerator alarm.
+
+To change the early-warning threshold locally, set the ignored `.env` value:
+
+```text
+COLDCHAIN_HIGH_TEMP_ALARM_C=6.0
+```
+
+After changing the value, restart the application. The critical bounds remain
+the explicit demo policy limits of below `2°C` or above `8°C`.
 
 ## API
 
