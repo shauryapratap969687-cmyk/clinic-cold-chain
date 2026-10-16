@@ -16,15 +16,15 @@ async function until(condition) {
   assert.fail('UI did not reach the expected state');
 }
 
-function setup({ required = false, role = 'admin', stale = false, failMutation = false, audio = false } = {}) {
+function setup({ required = false, role = 'admin', stale = false, failMutation = false, audio = false, audioState = 'running' } = {}) {
   const dom = new JSDOM(html, { url: 'http://localhost:8000', runScripts: 'outside-only', pretendToBeVisual: true });
   const { window } = dom;
   window.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, { get: () => () => {}, set: () => true });
   let beepStarts = 0;
   if (audio) {
     window.AudioContext = class {
-      constructor() { this.state = 'running'; this.currentTime = 0; this.destination = {}; }
-      resume() { return Promise.resolve(); }
+      constructor() { this.state = audioState; this.currentTime = 0; this.destination = {}; }
+      resume() { this.state = 'running'; return Promise.resolve(); }
       createOscillator() {
         return { type: 'sine', frequency: { setValueAtTime() {} }, connect() {}, start() { beepStarts += 1; }, stop() {} };
       }
@@ -137,9 +137,10 @@ test('fresh temperature alarms are visible while stale alarm candidates stay exc
   assert.doesNotMatch(ui.$('temperatureAlarmPanel').className, /active/);
 });
 
-test('enabling alarm sound plays a test beep and a threshold crossing beeps again', async (t) => {
-  const ui = setup({ audio: true }); t.after(() => ui.dom.window.close());
+test('a suspended browser audio context is primed by the user gesture before alarm sound is enabled', async (t) => {
+  const ui = setup({ audio: true, audioState: 'suspended' }); t.after(() => ui.dom.window.close());
   await until(() => ui.$('temperatureAlarmCount').textContent === '0' && !ui.$('refreshButton').disabled);
+  ui.$('alarmSoundButton').dispatchEvent(new ui.window.Event('pointerdown', { bubbles: true }));
   ui.$('alarmSoundButton').click();
   await until(() => /test beep played/.test(ui.$('alarmSoundStatus').textContent));
   assert.equal(ui.getBeepStarts(), 2);

@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const state = { live: null, model: null, busy: false, generation: 0, pollTimer: null, fullPollTimer: null, token: null, user: null, config: null, active: false, reading: false, reads: new Set(), expiryTimer: null, recovery: false, panels: {}, received: null, stateStale: false, alarmSignals: new Set(), alarmInitialized: false, soundEnabled: false, audioContext: null };
+  const state = { live: null, model: null, busy: false, generation: 0, pollTimer: null, fullPollTimer: null, token: null, user: null, config: null, active: false, reading: false, reads: new Set(), expiryTimer: null, recovery: false, panels: {}, received: null, stateStale: false, alarmSignals: new Set(), alarmInitialized: false, soundEnabled: false, audioContext: null, audioResumePromise: null };
   const $ = (id) => document.getElementById(id);
   const els = {
     loading: $('loadingState'), error: $('globalError'), errorTitle: $('errorTitle'), errorMessage: $('errorMessage'),
@@ -119,8 +119,24 @@
     els.alarmSoundButton.setAttribute('aria-pressed', state.soundEnabled ? 'true' : 'false');
     els.alarmSoundStatus.textContent = state.soundEnabled ? 'Sound enabled for newly detected alarms.' : 'Sound is muted until enabled by a user click.';
   }
+  function prepareAudioContext() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    try {
+      state.audioContext = state.audioContext || new AudioContextClass();
+      const context = state.audioContext;
+      if (['suspended', 'interrupted'].includes(context.state) && context.resume) {
+        if (!state.audioResumePromise) {
+          state.audioResumePromise = Promise.resolve(context.resume()).finally(() => { state.audioResumePromise = null; });
+        }
+      }
+      return context;
+    } catch (_) {
+      return null;
+    }
+  }
   function playAlarmDoubleBeep() {
-    if (!state.soundEnabled || !state.audioContext || state.audioContext.state === 'suspended') return false;
+    if (!state.soundEnabled || !state.audioContext || ['suspended', 'interrupted', 'closed'].includes(state.audioContext.state)) return false;
     const context = state.audioContext;
     try {
       const start = context.currentTime + 0.01;
@@ -139,19 +155,20 @@
   }
   async function toggleAlarmSound() {
     if (state.soundEnabled) { state.soundEnabled = false; updateAlarmSoundButton(); return; }
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) { els.alarmSoundStatus.textContent = 'Web Audio is unavailable; visual alarms remain active.'; return; }
+    const context = prepareAudioContext();
+    if (!context) { els.alarmSoundStatus.textContent = 'Web Audio is unavailable; visual alarms remain active.'; return; }
     try {
-      state.audioContext = state.audioContext || new AudioContextClass();
-      if (state.audioContext.state === 'suspended' && state.audioContext.resume) await state.audioContext.resume();
-      if (state.audioContext.state === 'suspended') throw new Error('The browser kept audio suspended');
+      if (state.audioResumePromise) await state.audioResumePromise;
+      if (['suspended', 'interrupted', 'closed'].includes(context.state)) throw new Error('The browser kept audio suspended');
       state.soundEnabled = true; updateAlarmSoundButton();
       const played = playAlarmDoubleBeep();
-      els.alarmSoundStatus.textContent = played ? 'Sound enabled · test beep played; new alarms will beep twice.' : 'Sound enabled · new alarms will beep twice.';
+      if (!played) throw new Error('The browser did not start the test beep');
+      els.alarmSoundStatus.textContent = 'Sound enabled · test beep played; new alarms will beep twice.';
     } catch (_) {
-      state.soundEnabled = false; els.alarmSoundStatus.textContent = 'Sound could not be enabled; visual alarms remain active.';
+      state.soundEnabled = false; updateAlarmSoundButton(); els.alarmSoundStatus.textContent = 'Sound could not be enabled; visual alarms remain active.';
     }
   }
+  function primeAlarmAudio() { if (!state.soundEnabled) prepareAudioContext(); }
   function validationMessage(detail) {
     if (Array.isArray(detail)) return detail.map((item) => `${Array.isArray(item.loc) ? item.loc.filter((part) => part !== 'body').join('.') + ': ' : ''}${text(item.msg || item.message || item)}`).join('; ');
     return text(detail);
@@ -554,7 +571,7 @@
   $('restoreClinic').addEventListener('click', () => performAction('restore_clinic', { clinic_id: els.clinicSelect.value }));
   $('freezeClinic').addEventListener('click', () => performAction('freeze_clinic', { clinic_id: els.clinicSelect.value }));
   $('advance1').addEventListener('click', () => performAction('advance', { hours: 1 })); $('advance6').addEventListener('click', () => performAction('advance', { hours: 6 })); $('resetSimulation').addEventListener('click', () => performAction('reset'));
-  els.search.addEventListener('input', () => state.live && renderTable(state.live)); els.riskFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.feederFilter.addEventListener('change', () => state.live && renderTable(state.live)); $('dismissError').addEventListener('click', hideError); els.alarmSoundButton.addEventListener('click', toggleAlarmSound);
+  els.search.addEventListener('input', () => state.live && renderTable(state.live)); els.riskFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.feederFilter.addEventListener('change', () => state.live && renderTable(state.live)); $('dismissError').addEventListener('click', hideError); els.alarmSoundButton.addEventListener('pointerdown', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('touchstart', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('click', toggleAlarmSound);
   window.addEventListener('resize', () => { if (state.model && !els.modelContent.hidden) { drawChart($('reliabilityChart'), state.model.calibration, '#38d6c3', 'Reliability curve: observed outcome versus predicted probability'); drawChart($('rocChart'), state.model.roc_curve, '#f5a35b', 'ROC curve: true positive rate versus false positive rate'); } });
   $('alertsList').addEventListener('click', async (event) => {
     const button = event.target.closest('[data-ack]');
