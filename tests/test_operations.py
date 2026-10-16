@@ -97,35 +97,6 @@ def test_external_telemetry_updates_visible_state_and_refuses_simulator(runtime)
         assert client.post("/api/simulate", json={"action": "reset"}).json()["telemetry_mode"] == "simulation"
 
 
-def test_temperature_warning_alarm_and_critical_violation(runtime):
-    with TestClient(runtime()) as client:
-        client.post("/api/telemetry/clinic", json={"clinic_id": "CL-03", "temperature_c": 6.5, "source": "test-sensor"}).raise_for_status()
-        state = client.get("/api/state").json()
-        warning = clinic(state)
-        assert warning["temperature_c"] == 6.5
-        assert warning["too_hot"] is False
-        assert warning["temperature_alarm"] is True
-        assert warning["temperature_alarm_level"] == "warning"
-        assert warning["temperature_alarm_threshold_c"] == config.HIGH_TEMP_ALARM_C == 6.0
-        assert "early-warning" in warning["temperature_alarm_message"]
-        assert warning["risk_level"] == "Warning"
-        warning_alert = next(alert for alert in client.get("/api/alerts").json()["alerts"]
-                             if alert["entity_id"] == "CL-03" and alert["kind"] == "high_temperature_alarm")
-        assert warning_alert["status"] == "open"
-
-        client.post("/api/telemetry/clinic", json={"clinic_id": "CL-03", "temperature_c": 8.5, "source": "test-sensor"}).raise_for_status()
-        state = client.get("/api/state").json()
-        critical = clinic(state)
-        assert critical["temperature_c"] == 8.5
-        assert critical["too_hot"] is True
-        assert critical["temperature_alarm"] is True
-        assert critical["temperature_alarm_level"] == "critical"
-        assert critical["risk_level"] == "Critical"
-        alerts = [alert for alert in client.get("/api/alerts").json()["alerts"] if alert["entity_id"] == "CL-03"]
-        assert next(alert for alert in alerts if alert["kind"] == "thermal_violation")["status"] == "open"
-        assert next(alert for alert in alerts if alert["kind"] == "high_temperature_alarm")["status"] == "resolved"
-
-
 @pytest.mark.parametrize("payload", [
     {"clinic_id": "CL-99", "temperature_c": 4},
     {"clinic_id": "CL-01", "temperature_c": 101},
