@@ -375,7 +375,8 @@ def create_app() -> FastAPI:
     @app.get("/api/policy")
     def policy(_: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
         return {"medical_status": "Operational prototype; not clinically validated or certified; not medical advice",
-                "deterministic_safeguards": ["Observed temperature below 2C or above 8C always elevates to Critical",
+                "deterministic_safeguards": [f"Observed temperature above {config.HIGH_TEMP_ALARM_C:g}°C creates an early-warning alarm",
+                                               "Observed temperature below 2C or above 8C always elevates to Critical",
                                                "Feeder outage duration contributes deterministic risk when the model is unavailable"],
                 "missing_data": "Missing or stale clinic telemetry is Unknown and creates no fresh prediction. External telemetry switches the whole runtime into external mode; simulation changes require an explicit reset. External observations use rules only; historical simulation weather is not a live model input.",
                 "retention": "SQLite retains operational telemetry, alerts, events, audit entries, predictions, and feedback until an operator-managed database retention policy removes them",

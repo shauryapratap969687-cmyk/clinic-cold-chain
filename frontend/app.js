@@ -1,13 +1,13 @@
 (function () {
   'use strict';
 
-  const state = { live: null, model: null, busy: false, generation: 0, pollTimer: null, token: null, user: null, config: null, active: false, reading: false, reads: new Set(), expiryTimer: null, recovery: false, panels: {}, received: null };
+  const state = { live: null, model: null, busy: false, generation: 0, pollTimer: null, fullPollTimer: null, token: null, user: null, config: null, active: false, reading: false, reads: new Set(), expiryTimer: null, recovery: false, panels: {}, received: null, stateStale: false, alarmSignals: new Set(), alarmInitialized: false, soundEnabled: false, audioContext: null };
   const $ = (id) => document.getElementById(id);
   const els = {
     loading: $('loadingState'), error: $('globalError'), errorTitle: $('errorTitle'), errorMessage: $('errorMessage'),
     simClock: $('simClock'), horizon: $('horizonValue'), lastSync: $('lastSync'), feederGrid: $('feederGrid'),
     feederSelect: $('feederSelect'), clinicSelect: $('clinicSelect'), feederFilter: $('feederFilter'), riskFilter: $('riskFilter'), search: $('clinicSearch'),
-    tableBody: $('clinicTableBody'), tableSummary: $('tableSummary'), modelStatus: $('modelStatus'), modelUnavailable: $('modelUnavailable'), modelContent: $('modelContent')
+    tableBody: $('clinicTableBody'), tableSummary: $('tableSummary'), modelStatus: $('modelStatus'), modelUnavailable: $('modelUnavailable'), modelContent: $('modelContent'), temperatureAlarmPanel: $('temperatureAlarmPanel'), temperatureAlarmStatus: $('temperatureAlarmStatus'), temperatureAlarmThreshold: $('temperatureAlarmThreshold'), temperatureAlarmCount: $('temperatureAlarmCount'), temperatureAlarmCountLabel: $('temperatureAlarmCountLabel'), temperatureAlarmLastRefresh: $('temperatureAlarmLastRefresh'), alarmSoundButton: $('alarmSoundButton'), alarmSoundStatus: $('alarmSoundStatus')
   };
 
   function escapeHtml(value) {
@@ -41,6 +41,112 @@
   const role = () => state.user && state.user.role;
   const permitted = (kind) => ({ feeder: ['admin', 'grid_operator'], clinic: ['admin', 'clinic_operator'], feedback: ['admin', 'clinic_operator'], audit: ['admin', 'auditor'], write: ['admin', 'clinic_operator', 'grid_operator'] }[kind] || []).includes(role());
   const riskClass = (value) => ({ safe: 'safe', healthy: 'safe', critical: 'critical', high: 'critical', warning: 'warning', medium: 'warning', low: 'safe' }[String(value).toLowerCase()] || 'unknown');
+  const THERMAL_ALARM_THRESHOLD = 6;
+  const ALARM_FIELDS = ['temperature_alarm', 'temperature_alarm_active', 'thermal_alarm', 'thermal_alarm_active', 'critical_thermal_alarm', 'alarm_active', 'temperature_alarm_status', 'thermal_alarm_status', 'alarm_state'];
+  const alarmText = (value) => String(value == null ? '' : value).toLowerCase().replace(/[_-]+/g, ' ');
+  function freshReading(clinic) {
+    if (!clinic || state.stateStale) return false;
+    if (clinic.stale === true || clinic.is_stale === true || clinic.reading_stale === true) return false;
+    const quality = alarmText(clinic.data_quality || clinic.quality || clinic.telemetry_quality);
+    return !/(stale|missing|unknown|unavailable|invalid)/.test(quality);
+  }
+  function interpretAlarmValue(value, field) {
+    const name = alarmText(field);
+    if (typeof value === 'boolean') return { present: true, active: value, critical: value && name.includes('critical'), label: value ? (name.includes('critical') ? 'Critical thermal alarm' : 'Temperature alarm') : '' };
+    if (typeof value === 'number') return { present: true, active: value > 0, critical: value > 0 && name.includes('critical'), label: value > 0 ? 'Temperature alarm' : '' };
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const activeValue = ['active', 'alarm_active', 'triggered', 'is_active', 'open'].find((key) => Object.prototype.hasOwnProperty.call(value, key));
+      const statusValue = value.status ?? value.state ?? value.severity ?? value.level;
+      const status = alarmText(statusValue);
+      const active = activeValue ? interpretAlarmValue(value[activeValue], activeValue).active : status ? !/(clear|normal|safe|resolved|closed|inactive|none|ok|false)/.test(status) : Object.keys(value).length > 0;
+      const critical = name.includes('critical') || /critical/.test(status) || alarmText(value.severity).includes('critical');
+      return { present: true, active, critical: active && critical, label: active ? (critical ? 'Critical thermal alarm' : 'Temperature alarm') : '' };
+    }
+    if (Array.isArray(value)) return { present: true, active: value.length > 0, critical: value.some((item) => /critical/.test(alarmText(item && (item.severity || item.level || item.status)))), label: value.length ? 'Temperature alarm' : '' };
+    const status = alarmText(value);
+    if (!status) return { present: true, active: false, critical: false, label: '' };
+    const active = !/(clear|normal|safe|resolved|closed|inactive|none|ok|false|off)/.test(status);
+    return { present: true, active, critical: active && (name.includes('critical') || /critical/.test(status)), label: active ? (/critical/.test(status) ? 'Critical thermal alarm' : 'Temperature alarm') : '' };
+  }
+  function alarmFromCollection(data, clinic) {
+    const collections = [data && data.temperature_alarms, data && data.thermal_alarms, data && data.alarms].filter(Array.isArray);
+    for (const collection of collections) {
+      const match = collection.find((item) => {
+        const entity = item && (item.clinic_id ?? item.entity_id ?? item.id);
+        const kind = alarmText(item && (item.kind || item.type || item.category || item.alert_type || item.message));
+        return String(entity) === String(clinic.id) && /thermal|temperature/.test(kind);
+      });
+      if (match) return interpretAlarmValue(match, match.kind || match.type || 'thermal_alarm');
+    }
+    return null;
+  }
+  function formatAlarmThreshold(value) {
+    const number = finite(value) ? Number(value) : THERMAL_ALARM_THRESHOLD;
+    return Number.isInteger(number) ? String(number) : number.toFixed(1);
+  }
+  function temperatureAlarm(clinic, data) {
+    const threshold = finite(clinic && clinic.temperature_alarm_threshold_c) ? Number(clinic.temperature_alarm_threshold_c) : finite(data && data.temperature_alarm_threshold_c) ? Number(data.temperature_alarm_threshold_c) : THERMAL_ALARM_THRESHOLD;
+    let backendAlarm = null;
+    for (const field of ALARM_FIELDS) {
+      if (clinic && Object.prototype.hasOwnProperty.call(clinic, field)) {
+        backendAlarm = interpretAlarmValue(clinic[field], field);
+        if (field === 'temperature_alarm' && backendAlarm.active && alarmText(clinic.temperature_alarm_level).includes('critical')) {
+          backendAlarm.critical = true; backendAlarm.label = 'Critical thermal alarm';
+        }
+        break;
+      }
+    }
+    if (!backendAlarm) backendAlarm = alarmFromCollection(data, clinic);
+    if (!backendAlarm) {
+      const fallbackActive = finite(clinic && clinic.temperature_c) && Number(clinic.temperature_c) > threshold;
+      const critical = fallbackActive && String(clinic && clinic.risk_level).toLowerCase() === 'critical';
+      backendAlarm = { present: false, active: fallbackActive, critical, label: fallbackActive ? (critical ? 'Critical thermal alarm' : 'Temperature alarm') : '' };
+    }
+    const detected = backendAlarm.active === true;
+    return { detected, active: detected && freshReading(clinic), stale: detected && !freshReading(clinic), critical: detected && backendAlarm.critical === true, threshold, label: backendAlarm.label || (backendAlarm.critical ? 'Critical thermal alarm' : 'Temperature alarm') };
+  }
+  function alarmSignalKey(clinic, alarm) { return `${clinic.id}:${alarm.critical ? 'critical' : 'thermal'}`; }
+  function updateAlarmSignal(alarmRows) {
+    if (!alarmRows.length) { state.alarmSignals = new Set(); state.alarmInitialized = false; return; }
+    const next = new Set(alarmRows.filter((row) => row.alarm.active).map((row) => alarmSignalKey(row.clinic, row.alarm)));
+    const newlyActive = state.alarmInitialized && Array.from(next).some((signal) => !state.alarmSignals.has(signal));
+    state.alarmSignals = next; state.alarmInitialized = true;
+    if (newlyActive) playAlarmDoubleBeep();
+  }
+  function updateAlarmSoundButton() {
+    if (!els.alarmSoundButton) return;
+    els.alarmSoundButton.textContent = state.soundEnabled ? 'Mute alarm sound' : 'Enable alarm sound';
+    els.alarmSoundButton.setAttribute('aria-pressed', state.soundEnabled ? 'true' : 'false');
+    els.alarmSoundStatus.textContent = state.soundEnabled ? 'Sound enabled for newly detected alarms.' : 'Sound is muted until enabled by a user click.';
+  }
+  function playAlarmDoubleBeep() {
+    if (!state.soundEnabled || !state.audioContext) return;
+    const context = state.audioContext;
+    try {
+      const start = context.currentTime + 0.01;
+      [0, 0.2].forEach((offset) => {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = 'sine'; oscillator.frequency.setValueAtTime(880, start + offset);
+        gain.gain.setValueAtTime(0.0001, start + offset); gain.gain.exponentialRampToValueAtTime(0.16, start + offset + 0.015); gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.12);
+        oscillator.connect(gain); gain.connect(context.destination); oscillator.start(start + offset); oscillator.stop(start + offset + 0.13);
+      });
+    } catch (_) {
+      // The visual alarm remains authoritative when Web Audio is unavailable.
+    }
+  }
+  async function toggleAlarmSound() {
+    if (state.soundEnabled) { state.soundEnabled = false; updateAlarmSoundButton(); return; }
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) { els.alarmSoundStatus.textContent = 'Web Audio is unavailable; visual alarms remain active.'; return; }
+    try {
+      state.audioContext = state.audioContext || new AudioContextClass();
+      if (state.audioContext.state === 'suspended' && state.audioContext.resume) await state.audioContext.resume();
+      state.soundEnabled = true; updateAlarmSoundButton();
+    } catch (_) {
+      state.soundEnabled = false; els.alarmSoundStatus.textContent = 'Sound could not be enabled; visual alarms remain active.';
+    }
+  }
   function validationMessage(detail) {
     if (Array.isArray(detail)) return detail.map((item) => `${Array.isArray(item.loc) ? item.loc.filter((part) => part !== 'body').join('.') + ': ' : ''}${text(item.msg || item.message || item)}`).join('; ');
     return text(detail);
@@ -87,6 +193,36 @@
   function feederName(id) {
     const feeder = state.live && state.live.feeders && state.live.feeders.find((item) => Number(item.id) === Number(id));
     return feeder ? feeder.name : `Feeder ${id}`;
+  }
+
+  function renderTemperatureAlarm(data, receivedAt) {
+    const clinics = Array.isArray(data && data.clinics) ? data.clinics : [];
+    const alarmRows = clinics.map((clinic) => ({ clinic, alarm: temperatureAlarm(clinic, data) }));
+    const active = alarmRows.filter((row) => row.alarm.active);
+    const stale = alarmRows.filter((row) => row.alarm.stale);
+    const threshold = alarmRows.find((row) => finite(row.alarm.threshold))?.alarm.threshold || (finite(data && data.temperature_alarm_threshold_c) ? Number(data.temperature_alarm_threshold_c) : THERMAL_ALARM_THRESHOLD);
+    const thresholdLabel = `>${formatAlarmThreshold(threshold)}°C`;
+    els.temperatureAlarmThreshold.textContent = thresholdLabel;
+    const currentUnavailable = state.stateStale;
+    const displayCount = currentUnavailable ? '—' : String(active.length);
+    els.temperatureAlarmCount.textContent = displayCount;
+    if (currentUnavailable) {
+      els.temperatureAlarmCountLabel.textContent = active.length || stale.length ? `Last known: ${active.length + stale.length} alarm${active.length + stale.length === 1 ? '' : 's'}` : 'Current count unavailable';
+      els.temperatureAlarmStatus.textContent = 'Current alarm state unavailable · retained readings are last known.';
+    } else if (active.length) {
+      els.temperatureAlarmCountLabel.textContent = `${active.length} fresh reading${active.length === 1 ? '' : 's'} above threshold`;
+      els.temperatureAlarmStatus.textContent = `${active.length} clinic${active.length === 1 ? '' : 's'} above the ${thresholdLabel} alarm threshold.`;
+    } else if (stale.length) {
+      els.temperatureAlarmCountLabel.textContent = `${stale.length} stale alarm candidate${stale.length === 1 ? '' : 's'} excluded`;
+      els.temperatureAlarmStatus.textContent = `No fresh alarms · ${stale.length} stale reading${stale.length === 1 ? '' : 's'} excluded from the count.`;
+    } else {
+      els.temperatureAlarmCountLabel.textContent = 'No fresh alarm readings';
+      els.temperatureAlarmStatus.textContent = `No current clinic exceeds the ${thresholdLabel} alarm threshold.`;
+    }
+    els.temperatureAlarmLastRefresh.textContent = receivedAt || state.received || data.timestamp ? localTime(receivedAt || state.received || data.timestamp) : '—';
+    els.temperatureAlarmPanel.classList.toggle('active', !currentUnavailable && active.length > 0);
+    els.temperatureAlarmPanel.classList.toggle('stale', currentUnavailable || stale.length > 0);
+    updateAlarmSignal(alarmRows);
   }
 
   function renderSummary(data) {
@@ -149,17 +285,17 @@
     const levelFor = (clinic) => clinic.data_quality && clinic.data_quality !== 'ok' ? 'Unknown' : clinic.too_cold || clinic.too_hot || (finite(clinic.temperature_c) && (Number(clinic.temperature_c) < 2 || Number(clinic.temperature_c) > 8)) ? 'Critical' : ['Safe', 'Warning', 'Critical'].includes(clinic.risk_level) ? clinic.risk_level : 'Unknown';
     const rows = clinics.filter((clinic) => (!query || `${clinic.id} ${clinic.name}`.toLowerCase().includes(query)) && (risk === 'all' || levelFor(clinic) === risk) && (feeder === 'all' || String(clinic.feeder_id) === feeder));
     els.tableBody.innerHTML = rows.length ? rows.map((clinic) => {
-      const level = levelFor(clinic); const levelClass = riskClass(level); const power = clinic.power_on === true; const cold = clinic.too_cold || (finite(clinic.temperature_c) && Number(clinic.temperature_c) < 2); const hot = clinic.too_hot || (finite(clinic.temperature_c) && Number(clinic.temperature_c) > 8);
+      const level = levelFor(clinic); const levelClass = riskClass(level); const power = clinic.power_on === true; const cold = clinic.too_cold || (finite(clinic.temperature_c) && Number(clinic.temperature_c) < 2); const hot = clinic.too_hot || (finite(clinic.temperature_c) && Number(clinic.temperature_c) > 8); const alarm = temperatureAlarm(clinic, data); const alarmBadge = alarm.active ? `<span class="temperature-alarm-badge">${escapeHtml(alarm.label || 'Temperature alarm')} · &gt;${escapeHtml(formatAlarmThreshold(alarm.threshold))}°C</span>` : alarm.stale ? '<span class="temperature-alarm-badge stale">Last known alarm · current reading stale</span>' : '';
       const hazard = cold || hot ? `<span class="hazard-tag">${clinic.data_quality === 'ok' ? 'Observed' : 'Last known'}: ${cold ? 'too cold (<2°C)' : 'too hot (>8°C)'}</span>` : '';
       const powerLabel = clinic.data_quality && clinic.data_quality !== 'ok' ? 'Unknown / last known' : clinic.power_on == null ? 'Unknown' : power ? 'Online' : 'Offline';
       const status = clinic.status ? `<span class="clinic-id">${escapeHtml(clinic.status)}</span>` : '';
-      return `<tr><td><span class="clinic-name">${escapeHtml(clinic.name)}</span><span class="clinic-id">${escapeHtml(clinic.id)}</span>${status}<span class="clinic-id">Source: ${escapeHtml(text(clinic.source || clinic.risk_source))} · Quality: ${escapeHtml(text(clinic.data_quality))}</span></td><td class="feeder-cell">${escapeHtml(feederName(clinic.feeder_id))}</td><td><span class="power-state ${power && clinic.data_quality === 'ok' ? '' : 'off'}"><i></i>${powerLabel}</span></td><td><span class="temp ${cold ? 'cold' : hot ? 'hot' : ''}">${formatNumber(clinic.temperature_c, 1)}${finite(clinic.temperature_c) ? '°C' : ''}</span>${hazard}</td><td><span class="weather"><span>☂ <b>${formatNumber(clinic.forecast_rain_next_6h, 1)} mm</b></span><span>≋ <b>${formatNumber(clinic.forecast_wind_next_6h, 1)} km/h</b></span></span></td><td><div class="risk-cell"><span class="risk-value">${percent(clinic.risk_probability)}</span><span class="badge ${levelClass}">${escapeHtml(level)}</span></div></td></tr>`;
+      return `<tr><td><span class="clinic-name">${escapeHtml(clinic.name)}</span><span class="clinic-id">${escapeHtml(clinic.id)}</span>${status}<span class="clinic-id">Source: ${escapeHtml(text(clinic.source || clinic.risk_source))} · Quality: ${escapeHtml(text(clinic.data_quality))}</span></td><td class="feeder-cell">${escapeHtml(feederName(clinic.feeder_id))}</td><td><span class="power-state ${power && clinic.data_quality === 'ok' ? '' : 'off'}"><i></i>${powerLabel}</span></td><td><div class="temp-stack"><span class="temp ${cold ? 'cold' : hot || alarm.active ? 'hot alarm' : ''}">${formatNumber(clinic.temperature_c, 1)}${finite(clinic.temperature_c) ? '°C' : ''}</span>${alarmBadge}${hazard}</div></td><td><span class="weather"><span>☂ <b>${formatNumber(clinic.forecast_rain_next_6h, 1)} mm</b></span><span>≋ <b>${formatNumber(clinic.forecast_wind_next_6h, 1)} km/h</b></span></span></td><td><div class="risk-cell"><span class="risk-value">${percent(clinic.risk_probability)}</span><span class="badge ${levelClass}">${escapeHtml(level)}</span></div></td></tr>`;
     }).join('') : '<tr><td colspan="6" class="empty-cell">No clinics match the current filters.</td></tr>';
     els.tableSummary.textContent = `Showing ${rows.length} of ${clinics.length} clinics · Model probabilities appear only when available. Observed temperature violations elevate risk independently. Readings with stale quality are last known.`;
   }
 
-  function renderState(data) {
-    state.live = data; renderHeader(data); renderSummary(data); renderFeeders(data); renderSelects(data); renderTable(data);
+  function renderState(data, receivedAt) {
+    state.live = data; renderHeader(data); renderSummary(data); renderFeeders(data); renderSelects(data); renderTemperatureAlarm(data, receivedAt); renderTable(data);
   }
 
   function drawChart(canvas, points, color, ariaLabel) {
@@ -245,11 +381,12 @@
     clearTimeout(state.toastTimer); state.toastTimer = setTimeout(() => notification.remove(), 6500);
   }
   function invalidate() {
-    state.generation += 1; clearTimeout(state.pollTimer);
+    state.generation += 1; clearTimeout(state.pollTimer); clearTimeout(state.fullPollTimer);
     state.reads.forEach((controller) => controller.abort()); state.reads.clear(); state.reading = false;
     return state.generation;
   }
   function connection(ok, message) {
+    state.stateStale = !ok;
     document.body.classList.toggle('disconnected', !ok);
     $('connectionStatus').textContent = message;
     $('connectionStatus').parentElement.classList.toggle('stale', !ok);
@@ -258,11 +395,12 @@
       $('healthSub').textContent = state.live ? 'Retained values are last known, not live' : 'No current state available';
       $('healthDot').className = 'health-dot warning'; $('healthTrack').parentElement.className = 'health-track unknown';
       $('telemetryContent').innerHTML = '<span class="badge warning">Stale / unknown — state connection unavailable</span><p>Last-known readings must not be treated as current.</p>';
+      if (state.live) { renderTemperatureAlarm(state.live, state.received); renderTable(state.live); }
     }
   }
   function lockSession(message) {
     invalidate(); clearTimeout(state.expiryTimer); clearTimeout(state.toastTimer);
-    state.token = null; state.user = null; state.active = false; state.busy = false; state.recovery = false; state.recoveryFor = null; state.received = null; state.panels = {};
+    state.token = null; state.user = null; state.active = false; state.busy = false; state.recovery = false; state.recoveryFor = null; state.received = null; state.panels = {}; state.stateStale = false; state.alarmSignals = new Set(); state.alarmInitialized = false;
     renderState({}); state.live = null; renderModel(null); state.model = null;
     ['alertsList', 'weatherContent', 'telemetryContent', 'monitoringContent', 'policyContent', 'auditContent', 'sessionIdentity', 'toastRegion', 'feedbackStatus', 'featureImportance'].forEach((id) => { $(id).replaceChildren(); });
     ['modelName', 'modelHorizon', 'datasetInfo', 'positiveRate', 'prAuc', 'f2Score', 'brierScore', 'rocAuc', 'threshold', 'prevalence', 'matrixTn', 'matrixFp', 'matrixFn', 'matrixTp'].forEach((id) => { $(id).textContent = '—'; });
@@ -273,7 +411,7 @@
     $('dashboard').hidden = true; $('sectionNav').hidden = true; $('auditSection').hidden = true;
     $('authPanel').hidden = false; $('authStatus').textContent = message; $('loginForm').hidden = !state.config; $('loginForm').reset();
     $('demoEnter').hidden = !isDemo(); $('retryAuth').hidden = !!state.config; $('loginButton').disabled = false; $('demoEnter').disabled = false;
-    els.loading.hidden = true; hideError(); setControlsDisabled(false);
+    els.loading.hidden = true; hideError(); updateAlarmSoundButton(); setControlsDisabled(false);
   }
   function isDemo() { return state.config && state.config.auth_mode === 'demo' && state.config.demo !== false; }
   function enterSession(user, token, expires) {
@@ -303,20 +441,43 @@
       if (isDemo()) await enterDemo(); else $('authStatus').textContent = 'Authentication required. Sign in before accessing operational data.';
     } catch (error) { if (generation === state.generation) { $('authStatus').textContent = `Cannot verify access configuration. ${error.message}`; $('retryAuth').hidden = false; } }
   }
-  function schedulePoll() {
+  function scheduleDashboardPoll() {
     clearTimeout(state.pollTimer);
-    if (state.active && !document.hidden && !state.busy && !state.reading && !state.recovery) state.pollTimer = setTimeout(() => refreshAll(), 15000);
+    if (state.active && !document.hidden && !state.recovery) state.pollTimer = setTimeout(() => pollDashboardState(), 3000);
+  }
+  function scheduleFullPoll() {
+    clearTimeout(state.fullPollTimer);
+    if (state.active && !document.hidden && !state.recovery) state.fullPollTimer = setTimeout(() => {
+      if (state.busy || state.reading) scheduleFullPoll(); else refreshAll();
+    }, 15000);
+  }
+  async function pollDashboardState() {
+    if (!state.active || document.hidden || state.busy || state.reading || state.recovery) { scheduleDashboardPoll(); return; }
+    clearTimeout(state.pollTimer); const generation = state.generation; state.reading = true; setControlsDisabled(false);
+    try {
+      const data = await api('/api/state');
+      if (generation !== state.generation || !state.active) return;
+      if (!Array.isArray(data.clinics) || !Array.isArray(data.feeders)) throw new Error('State response is missing clinics or feeders.');
+      const receivedAt = new Date().toISOString(); state.received = receivedAt; state.stateStale = false; renderState(data, receivedAt); renderTelemetry(data);
+      const mode = state.token ? 'Authenticated session' : 'Local demo · auth bypassed';
+      connection(true, `${mode} · Connected · Received ${localTime(receivedAt)}`); els.lastSync.textContent = localTime(receivedAt);
+    } catch (error) {
+      if (generation !== state.generation || !state.active) return;
+      connection(false, `Disconnected · ${state.received ? `Last known data received ${localTime(state.received)}` : 'No current data'} · ${error.message}`);
+    } finally {
+      if (generation === state.generation && state.active) { state.reading = false; setControlsDisabled(false); scheduleDashboardPoll(); }
+    }
   }
   async function refreshAll(manual = false) {
     if (!state.active || state.busy || state.reading || document.hidden) return;
-    clearTimeout(state.pollTimer); const generation = state.generation; state.reading = true; setControlsDisabled(false);
+    clearTimeout(state.pollTimer); clearTimeout(state.fullPollTimer); const generation = state.generation; state.reading = true; setControlsDisabled(false);
     els.loading.hidden = !!state.live; $('dashboard').setAttribute('aria-busy', 'true');
     let stateOk = false;
     try {
       const data = await api('/api/state');
       if (generation !== state.generation || !state.active) return;
       if (!Array.isArray(data.clinics) || !Array.isArray(data.feeders)) throw new Error('State response is missing clinics or feeders.');
-      renderState(data); renderTelemetry(data); state.received = new Date().toISOString(); stateOk = true;
+      const receivedAt = new Date().toISOString(); state.received = receivedAt; state.stateStale = false; renderState(data, receivedAt); renderTelemetry(data); stateOk = true;
       const mode = state.token ? 'Authenticated session' : 'Local demo · auth bypassed';
       connection(true, `${mode} · Connected · Received ${localTime(state.received)}`);
       els.lastSync.textContent = localTime(state.received);
@@ -347,7 +508,7 @@
     const recoveryIndex = names.indexOf(state.recoveryFor);
     const recovered = stateOk && (recoveryIndex < 0 || results[recoveryIndex].status === 'fulfilled');
     if (manual && recovered) { state.recovery = false; state.recoveryFor = null; hideError(); toast('State refreshed. Review the latest records before another action.'); }
-    state.reading = false; els.loading.hidden = true; $('dashboard').setAttribute('aria-busy', 'false'); setControlsDisabled(false); schedulePoll();
+    state.reading = false; els.loading.hidden = true; $('dashboard').setAttribute('aria-busy', 'false'); setControlsDisabled(false); scheduleDashboardPoll(); scheduleFullPoll();
   }
   async function mutate(path, payload, kind, message, onSuccess) {
     if (state.busy || state.recovery || !state.active || !permitted(kind)) return;
@@ -372,7 +533,7 @@
     const kind = ['trip_feeder', 'restore_feeder'].includes(action) ? 'feeder' : ['local_fault', 'restore_clinic', 'freeze_clinic'].includes(action) ? 'clinic' : 'write';
     return mutate('/api/simulate', { action, ...(extra || {}) }, kind, 'Simulation action recorded.', (data) => {
       if (!Array.isArray(data.clinics) || !Array.isArray(data.feeders)) { const error = new Error('Simulation response could not be verified.'); error.ambiguous = true; throw error; }
-      renderState(data); renderTelemetry(data);
+      const receivedAt = new Date().toISOString(); state.received = receivedAt; state.stateStale = false; renderState(data, receivedAt); renderTelemetry(data);
     });
   }
 
@@ -382,7 +543,7 @@
   $('restoreClinic').addEventListener('click', () => performAction('restore_clinic', { clinic_id: els.clinicSelect.value }));
   $('freezeClinic').addEventListener('click', () => performAction('freeze_clinic', { clinic_id: els.clinicSelect.value }));
   $('advance1').addEventListener('click', () => performAction('advance', { hours: 1 })); $('advance6').addEventListener('click', () => performAction('advance', { hours: 6 })); $('resetSimulation').addEventListener('click', () => performAction('reset'));
-  els.search.addEventListener('input', () => state.live && renderTable(state.live)); els.riskFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.feederFilter.addEventListener('change', () => state.live && renderTable(state.live)); $('dismissError').addEventListener('click', hideError);
+  els.search.addEventListener('input', () => state.live && renderTable(state.live)); els.riskFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.feederFilter.addEventListener('change', () => state.live && renderTable(state.live)); $('dismissError').addEventListener('click', hideError); els.alarmSoundButton.addEventListener('click', toggleAlarmSound);
   window.addEventListener('resize', () => { if (state.model && !els.modelContent.hidden) { drawChart($('reliabilityChart'), state.model.calibration, '#38d6c3', 'Reliability curve: observed outcome versus predicted probability'); drawChart($('rocChart'), state.model.roc_curve, '#f5a35b', 'ROC curve: true positive rate versus false positive rate'); } });
   $('alertsList').addEventListener('click', async (event) => {
     const button = event.target.closest('[data-ack]');
@@ -418,7 +579,7 @@
   $('demoEnter').addEventListener('click', enterDemo); $('retryAuth').addEventListener('click', configureAuth);
   $('refreshButton').addEventListener('click', () => refreshAll(true));
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { clearTimeout(state.pollTimer); }
+    if (document.hidden) { clearTimeout(state.pollTimer); clearTimeout(state.fullPollTimer); }
     else if (state.active && !state.recovery) refreshAll();
   });
   const unknown = document.createElement('option'); unknown.value = 'Unknown'; unknown.textContent = 'Unknown'; els.riskFilter.append(unknown);

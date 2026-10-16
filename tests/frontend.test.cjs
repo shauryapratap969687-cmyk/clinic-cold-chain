@@ -58,7 +58,7 @@ function setup({ required = false, role = 'admin', stale = false, failMutation =
     return { ok: true, status: 200, json: async () => copy(payload) };
   };
   vm.runInContext(code, dom.getInternalVMContext());
-  return { dom, window, calls, errors, $: (id) => window.document.getElementById(id) };
+  return { dom, window, calls, errors, live, $: (id) => window.document.getElementById(id) };
 }
 
 test('demo loads model and operations, then sends and renders a shared feeder trip', async (t) => {
@@ -109,6 +109,40 @@ test('stale last-known thermal excursion stays Unknown rather than fresh Critica
   assert.match(row.textContent, /Last known: too cold/);
   assert.match(row.textContent, /Unavailable \/ rules only/);
   assert.doesNotMatch(row.textContent, /Critical/);
+});
+
+test('fresh temperature alarms are visible while stale alarm candidates stay excluded', async (t) => {
+  const ui = setup(); t.after(() => ui.dom.window.close());
+  await until(() => ui.$('temperatureAlarmCount').textContent === '0' && !ui.$('refreshButton').disabled);
+  ui.live.clinics[0].temperature_c = 6.4;
+  ui.$('refreshButton').click();
+  await until(() => ui.$('temperatureAlarmCount').textContent === '1');
+  assert.match(ui.$('clinicTableBody').firstElementChild.textContent, /Temperature alarm/);
+  ui.live.clinics[0].data_quality = 'stale';
+  ui.live.stale_sensor_count = 1;
+  ui.$('refreshButton').click();
+  await until(() => ui.$('temperatureAlarmCount').textContent === '0' && /stale reading/.test(ui.$('temperatureAlarmStatus').textContent));
+  assert.match(ui.$('clinicTableBody').firstElementChild.textContent, /Last known alarm/);
+  assert.doesNotMatch(ui.$('temperatureAlarmPanel').className, /active/);
+});
+
+test('backend temperature alarm fields provide level and override the compatibility fallback', async (t) => {
+  const ui = setup(); t.after(() => ui.dom.window.close());
+  await until(() => ui.$('temperatureAlarmCount').textContent === '0' && !ui.$('refreshButton').disabled);
+  const clinic = ui.live.clinics[0];
+  clinic.temperature_c = 4.5;
+  clinic.temperature_alarm = true;
+  clinic.temperature_alarm_level = 'critical';
+  clinic.temperature_alarm_threshold_c = 6;
+  ui.$('refreshButton').click();
+  await until(() => ui.$('temperatureAlarmCount').textContent === '1');
+  assert.equal(ui.$('temperatureAlarmThreshold').textContent, '>6°C');
+  assert.match(ui.$('clinicTableBody').firstElementChild.textContent, /Critical thermal alarm/);
+  clinic.temperature_c = 7.5;
+  clinic.temperature_alarm = false;
+  ui.$('refreshButton').click();
+  await until(() => ui.$('temperatureAlarmCount').textContent === '0');
+  assert.doesNotMatch(ui.$('clinicTableBody').firstElementChild.textContent, /Temperature alarm/);
 });
 
 test('uncertain mutation locks retries until a successful explicit refresh', async (t) => {

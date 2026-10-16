@@ -30,6 +30,10 @@ rules-based safety indicators, and a simulation sandbox.
   cached Open-Meteo weather adapter, and a rules-only fallback.
 - Alert acknowledgement, recurrence, recovery and timed escalation to a
   durable **demo-log outbox**. No real SMS/email/webhook delivery is configured.
+- A dashboard temperature safeguard that polls live state every three seconds,
+  marks fresh readings above the configurable 6°C early-warning threshold,
+  records durable alerts, and can play a browser double-beep after the operator
+  enables sound. The browser alarm is not a hardware alarm.
 - Monitoring and operator-confirmed outcomes, with no fabricated live accuracy.
 
 ## Run locally

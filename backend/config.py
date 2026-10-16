@@ -39,6 +39,7 @@ TELEMETRY_STALE_SECONDS = int(env("COLDCHAIN_TELEMETRY_STALE_SECONDS", "900"))
 WEATHER_CACHE_SECONDS = int(env("COLDCHAIN_WEATHER_CACHE_SECONDS", "300"))
 ALERT_ESCALATION_SECONDS = int(env("COLDCHAIN_ALERT_ESCALATION_SECONDS", "300"))
 WORKER_INTERVAL_SECONDS = float(env("COLDCHAIN_WORKER_INTERVAL_SECONDS", "5"))
+HIGH_TEMP_ALARM_C = float(env("COLDCHAIN_HIGH_TEMP_ALARM_C", "6.0"))
 
 
 def validate() -> None:
@@ -60,6 +61,8 @@ def validate() -> None:
         raise ValueError("Worker interval must be 1..60 seconds and weather timeout 0..10 seconds")
     if WEATHER_CACHE_SECONDS < 1:
         raise ValueError("Weather cache duration must be positive")
+    if not math.isfinite(HIGH_TEMP_ALARM_C) or not 2 <= HIGH_TEMP_ALARM_C < 8:
+        raise ValueError("COLDCHAIN_HIGH_TEMP_ALARM_C must be finite and in the range 2..8 (exclusive of 8)")
     if not math.isfinite(WEATHER_LATITUDE) or not -90 <= WEATHER_LATITUDE <= 90:
         raise ValueError("Invalid weather latitude")
     if not math.isfinite(WEATHER_LONGITUDE) or not -180 <= WEATHER_LONGITUDE <= 180:

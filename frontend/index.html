@@ -39,6 +39,23 @@
     </section>
     <main class="main-content" id="dashboard" hidden>
       <div class="connection-banner" role="status"><span id="connectionStatus">Connecting…</span><div class="button-row"><button id="refreshButton" class="btn btn-secondary">Refresh state</button><button id="optionalSignIn" class="btn btn-ghost" hidden>Sign in with an account</button></div></div>
+      <section id="temperatureAlarmPanel" class="temperature-alarm-panel" aria-labelledby="temperatureAlarmHeading" aria-describedby="temperatureAlarmDisclaimer">
+        <div class="temperature-alarm-copy">
+          <p class="section-kicker">LIVE THERMAL SAFEGUARD</p>
+          <h2 id="temperatureAlarmHeading">Temperature alarm</h2>
+          <p id="temperatureAlarmStatus" class="panel-status" role="status">Waiting for a fresh state…</p>
+          <p id="temperatureAlarmDisclaimer" class="alarm-disclaimer"><strong>No hardware connected.</strong> This browser alarm uses the synthetic/API readings shown here; it is not an independent refrigerator alarm or a substitute for local monitoring.</p>
+        </div>
+        <div class="temperature-alarm-metrics" aria-label="Temperature alarm summary">
+          <div class="temperature-alarm-metric"><span class="label">THRESHOLD</span><strong id="temperatureAlarmThreshold">&gt;6°C</strong><span>fresh reading required</span></div>
+          <div class="temperature-alarm-metric alarm-count"><span class="label">ALARM CLINICS</span><strong id="temperatureAlarmCount">—</strong><span id="temperatureAlarmCountLabel">Awaiting live state</span></div>
+          <div class="temperature-alarm-metric alarm-refresh"><span class="label">LAST STATE REFRESH</span><strong id="temperatureAlarmLastRefresh">—</strong><span>browser poll / manual refresh</span></div>
+        </div>
+        <div class="temperature-alarm-actions">
+          <button id="alarmSoundButton" class="btn btn-warning" type="button" aria-pressed="false" aria-describedby="alarmSoundStatus">Enable alarm sound</button>
+          <span id="alarmSoundStatus" class="alarm-sound-status" role="status">Sound is muted until enabled by a user click.</span>
+        </div>
+      </section>
       <section class="intro-row" id="overview" aria-labelledby="pageTitle">
         <div>
           <p class="section-kicker">COLD-CHAIN OPERATIONS / DEMONSTRATION</p>
