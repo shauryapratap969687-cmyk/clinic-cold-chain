@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const state = { live: null, model: null, busy: false, generation: 0, pollTimer: null, fullPollTimer: null, token: null, user: null, config: null, active: false, reading: false, reads: new Set(), expiryTimer: null, recovery: false, panels: {}, received: null, stateStale: false, alarmSignals: new Set(), alarmInitialized: false, soundEnabled: false, audioContext: null, audioResumePromise: null };
+  const state = { live: null, model: null, busy: false, generation: 0, pollTimer: null, fullPollTimer: null, token: null, user: null, config: null, active: false, reading: false, reads: new Set(), expiryTimer: null, recovery: false, panels: {}, received: null, stateStale: false, soundEnabled: false, userMuted: false, audioError: null, audioContext: null, audioResumePromise: null, alarmStatus: 'Unknown', alarmPlaybackTimer: null, alarmPlaybackToken: 0, alarmPlaybackActive: false, alarmPlaybackStarting: false, alarmNodes: new Set() };
   const $ = (id) => document.getElementById(id);
   const els = {
     loading: $('loadingState'), error: $('globalError'), errorTitle: $('errorTitle'), errorMessage: $('errorMessage'),
@@ -105,25 +105,46 @@
     const detected = backendAlarm.active === true;
     return { detected, active: detected && freshReading(clinic), stale: detected && !freshReading(clinic), critical: detected && backendAlarm.critical === true, threshold, label: backendAlarm.label || (backendAlarm.critical ? 'Critical thermal alarm' : 'Temperature alarm') };
   }
-  function alarmSignalKey(clinic, alarm) { return `${clinic.id}:${alarm.critical ? 'critical' : 'thermal'}`; }
-  function updateAlarmSignal(alarmRows) {
-    if (!alarmRows.length) { state.alarmSignals = new Set(); state.alarmInitialized = false; return; }
-    const next = new Set(alarmRows.filter((row) => row.alarm.active).map((row) => alarmSignalKey(row.clinic, row.alarm)));
-    const newlyActive = state.alarmInitialized && Array.from(next).some((signal) => !state.alarmSignals.has(signal));
-    state.alarmSignals = next; state.alarmInitialized = true;
-    if (newlyActive) playAlarmDoubleBeep();
+  function alarmLevel(status) {
+    const normalized = alarmText(status);
+    if (/critical/.test(normalized)) return 'Critical';
+    if (/warning/.test(normalized)) return 'Warning';
+    if (/normal|safe|healthy/.test(normalized)) return 'Safe';
+    return 'Unknown';
+  }
+  function isAlertLevel(level) { return level === 'Warning' || level === 'Critical'; }
+  function renderAlarmSoundStatus() {
+    if (!els.alarmSoundStatus) return;
+    const level = state.alarmStatus;
+    if (state.audioError && isAlertLevel(level)) {
+      els.alarmSoundStatus.textContent = `${state.audioError} Visual alarm remains active.`;
+    } else if (state.audioError) {
+      els.alarmSoundStatus.textContent = `${state.audioError} Click Enable alarm sound to retry.`;
+    } else if (isAlertLevel(level) && state.soundEnabled && state.alarmPlaybackActive) {
+      els.alarmSoundStatus.textContent = `Alarm sounding automatically · system status ${level}.`;
+    } else if (isAlertLevel(level) && state.soundEnabled && state.alarmPlaybackStarting) {
+      els.alarmSoundStatus.textContent = `System status ${level} · starting alarm sound…`;
+    } else if (isAlertLevel(level) && state.userMuted) {
+      els.alarmSoundStatus.textContent = `Alarm muted · system status ${level} is still being monitored.`;
+    } else if (isAlertLevel(level)) {
+      els.alarmSoundStatus.textContent = `System status ${level} · click Enable alarm sound to permit playback.`;
+    } else if (state.soundEnabled) {
+      els.alarmSoundStatus.textContent = 'Sound enabled · new WARNING/CRITICAL statuses will sound automatically.';
+    } else {
+      els.alarmSoundStatus.textContent = 'Sound is muted until enabled by a user click.';
+    }
   }
   function updateAlarmSoundButton() {
     if (!els.alarmSoundButton) return;
     els.alarmSoundButton.textContent = state.soundEnabled ? 'Mute alarm sound' : 'Enable alarm sound';
     els.alarmSoundButton.setAttribute('aria-pressed', state.soundEnabled ? 'true' : 'false');
-    els.alarmSoundStatus.textContent = state.soundEnabled ? 'Sound enabled for newly detected alarms.' : 'Sound is muted until enabled by a user click.';
+    renderAlarmSoundStatus();
   }
   function prepareAudioContext() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return null;
     try {
-      state.audioContext = state.audioContext || new AudioContextClass();
+      if (!state.audioContext || state.audioContext.state === 'closed') state.audioContext = new AudioContextClass();
       const context = state.audioContext;
       if (['suspended', 'interrupted'].includes(context.state) && context.resume) {
         if (!state.audioResumePromise) {
@@ -135,6 +156,32 @@
       return null;
     }
   }
+  function stopAlarmSound() {
+    if (state.alarmPlaybackTimer !== null) { clearTimeout(state.alarmPlaybackTimer); state.alarmPlaybackTimer = null; }
+    state.alarmPlaybackToken += 1;
+    state.alarmPlaybackActive = false;
+    state.alarmPlaybackStarting = false;
+    state.alarmNodes.forEach((node) => {
+      try { if (typeof node.stop === 'function') node.stop(); } catch (_) {}
+      try { if (typeof node.disconnect === 'function') node.disconnect(); } catch (_) {}
+    });
+    state.alarmNodes.clear();
+  }
+  function disposeAlarmAudio() {
+    stopAlarmSound();
+    if (state.audioContext && typeof state.audioContext.close === 'function') {
+      try { state.audioContext.close(); } catch (_) {}
+    }
+    state.audioContext = null;
+    state.audioResumePromise = null;
+  }
+  function failAlarmPlayback(message) {
+    stopAlarmSound();
+    state.soundEnabled = false;
+    state.userMuted = false;
+    state.audioError = message;
+    updateAlarmSoundButton();
+  }
   function playAlarmDoubleBeep() {
     if (!state.soundEnabled || !state.audioContext || ['suspended', 'interrupted', 'closed'].includes(state.audioContext.state)) return false;
     const context = state.audioContext;
@@ -145,6 +192,8 @@
         const gain = context.createGain();
         oscillator.type = 'sine'; oscillator.frequency.setValueAtTime(880, start + offset);
         gain.gain.setValueAtTime(0.0001, start + offset); gain.gain.exponentialRampToValueAtTime(0.16, start + offset + 0.015); gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.12);
+        state.alarmNodes.add(oscillator); state.alarmNodes.add(gain);
+        oscillator.onended = () => { state.alarmNodes.delete(oscillator); state.alarmNodes.delete(gain); };
         oscillator.connect(gain); gain.connect(context.destination); oscillator.start(start + offset); oscillator.stop(start + offset + 0.13);
       });
       return true;
@@ -153,19 +202,54 @@
       return false;
     }
   }
-  async function toggleAlarmSound() {
-    if (state.soundEnabled) { state.soundEnabled = false; updateAlarmSoundButton(); return; }
+  function scheduleAlarmSound(token) {
+    if (!state.alarmPlaybackActive || token !== state.alarmPlaybackToken || !isAlertLevel(state.alarmStatus) || !state.soundEnabled) return;
+    state.alarmPlaybackTimer = setTimeout(() => {
+      state.alarmPlaybackTimer = null;
+      if (!state.alarmPlaybackActive || token !== state.alarmPlaybackToken || !isAlertLevel(state.alarmStatus) || !state.soundEnabled) return;
+      if (!playAlarmDoubleBeep()) { failAlarmPlayback('Alarm sound could not be played.'); return; }
+      scheduleAlarmSound(token);
+    }, 1100);
+  }
+  function startAlarmSound() {
+    if (!isAlertLevel(state.alarmStatus) || !state.soundEnabled) { renderAlarmSoundStatus(); return false; }
+    if (state.alarmPlaybackActive || state.alarmPlaybackStarting) { renderAlarmSoundStatus(); return true; }
     const context = prepareAudioContext();
-    if (!context) { els.alarmSoundStatus.textContent = 'Web Audio is unavailable; visual alarms remain active.'; return; }
+    if (!context) { failAlarmPlayback('Web Audio is unavailable;'); return false; }
+    const token = ++state.alarmPlaybackToken;
+    const begin = () => {
+      state.alarmPlaybackStarting = false;
+      if (token !== state.alarmPlaybackToken || !state.soundEnabled || !isAlertLevel(state.alarmStatus)) { renderAlarmSoundStatus(); return false; }
+      if (['suspended', 'interrupted', 'closed'].includes(context.state)) { failAlarmPlayback('The browser blocked alarm playback. Click Enable alarm sound to retry.'); return false; }
+      state.alarmPlaybackActive = true;
+      if (!playAlarmDoubleBeep()) { failAlarmPlayback('Alarm sound could not be played.'); return false; }
+      scheduleAlarmSound(token);
+      renderAlarmSoundStatus();
+      return true;
+    };
+    if (state.audioResumePromise) {
+      state.alarmPlaybackStarting = true;
+      renderAlarmSoundStatus();
+      state.audioResumePromise.then(begin).catch(() => { if (token === state.alarmPlaybackToken) failAlarmPlayback('The browser blocked alarm playback. Click Enable alarm sound to retry.'); });
+      return true;
+    }
+    return begin();
+  }
+  async function toggleAlarmSound() {
+    if (state.soundEnabled) { state.soundEnabled = false; state.userMuted = true; state.audioError = null; stopAlarmSound(); updateAlarmSoundButton(); return; }
+    state.userMuted = false; state.audioError = null;
+    const context = prepareAudioContext();
+    if (!context) { state.audioError = 'Web Audio is unavailable;'; updateAlarmSoundButton(); return; }
     try {
       if (state.audioResumePromise) await state.audioResumePromise;
       if (['suspended', 'interrupted', 'closed'].includes(context.state)) throw new Error('The browser kept audio suspended');
       state.soundEnabled = true; updateAlarmSoundButton();
       const played = playAlarmDoubleBeep();
       if (!played) throw new Error('The browser did not start the test beep');
-      els.alarmSoundStatus.textContent = 'Sound enabled · test beep played; new alarms will beep twice.';
+      if (isAlertLevel(state.alarmStatus)) startAlarmSound();
+      else els.alarmSoundStatus.textContent = 'Sound enabled · test beep played; new alarms will sound automatically.';
     } catch (_) {
-      state.soundEnabled = false; updateAlarmSoundButton(); els.alarmSoundStatus.textContent = 'Sound could not be enabled; visual alarms remain active.';
+      state.soundEnabled = false; state.audioError = 'Sound could not be enabled;'; stopAlarmSound(); updateAlarmSoundButton();
     }
   }
   function primeAlarmAudio() { if (!state.soundEnabled) prepareAudioContext(); }
@@ -244,7 +328,12 @@
     els.temperatureAlarmLastRefresh.textContent = receivedAt || state.received || data.timestamp ? localTime(receivedAt || state.received || data.timestamp) : '—';
     els.temperatureAlarmPanel.classList.toggle('active', !currentUnavailable && active.length > 0);
     els.temperatureAlarmPanel.classList.toggle('stale', currentUnavailable || stale.length > 0);
-    updateAlarmSignal(alarmRows);
+  }
+  function updateSystemAlarm(status) {
+    state.alarmStatus = alarmLevel(status);
+    if (!isAlertLevel(state.alarmStatus)) { stopAlarmSound(); state.audioError = null; }
+    else if (state.soundEnabled && !state.alarmPlaybackActive && !state.alarmPlaybackStarting) startAlarmSound();
+    renderAlarmSoundStatus();
   }
 
   function renderSummary(data) {
@@ -269,7 +358,7 @@
     const warningNow = clinics.some((clinic) => fresh(clinic) && (clinic.risk_level === 'Warning' || clinic.temperature_alarm_level === 'warning' || clinic.power_on === false || (finite(clinic.temperature_c) && Number(clinic.temperature_c) > 6))) || feeders.some((feeder) => feeder.online === false);
     const derivedHealth = criticalNow ? 'Critical' : warningNow ? 'Warning' : reportedHealth;
     const health = Number(data.stale_sensor_count) > 0 && riskClass(derivedHealth) === 'safe' ? 'Unknown / stale' : derivedHealth; const healthClass = riskClass(health);
-    $('systemHealth').textContent = health; $('healthSub').textContent = 'Risk posture from live state'; $('healthDot').className = `health-dot ${healthClass}`; $('healthTrack').parentElement.className = `health-track ${healthClass}`;
+    $('systemHealth').textContent = health; $('healthSub').textContent = 'Risk posture from live state'; $('healthDot').className = `health-dot ${healthClass}`; $('healthTrack').parentElement.className = `health-track ${healthClass}`; updateSystemAlarm(health);
     const total = Number(summary.total_clinics) || 0; $('criticalBar').style.width = total ? `${(Number(summary.critical_clinics || 0) / total) * 100}%` : '0%'; $('warningBar').style.width = total ? `${(Number(summary.warning_clinics || 0) / total) * 100}%` : '0%';
   }
 
@@ -427,8 +516,8 @@
     }
   }
   function lockSession(message) {
-    invalidate(); clearTimeout(state.expiryTimer); clearTimeout(state.toastTimer);
-    state.token = null; state.user = null; state.active = false; state.busy = false; state.recovery = false; state.recoveryFor = null; state.received = null; state.panels = {}; state.stateStale = false; state.alarmSignals = new Set(); state.alarmInitialized = false;
+    invalidate(); clearTimeout(state.expiryTimer); clearTimeout(state.toastTimer); disposeAlarmAudio();
+    state.token = null; state.user = null; state.active = false; state.busy = false; state.recovery = false; state.recoveryFor = null; state.received = null; state.panels = {}; state.stateStale = false; state.soundEnabled = false; state.userMuted = false; state.audioError = null; state.alarmStatus = 'Unknown';
     renderState({}); state.live = null; renderModel(null); state.model = null;
     ['alertsList', 'weatherContent', 'telemetryContent', 'monitoringContent', 'policyContent', 'auditContent', 'sessionIdentity', 'toastRegion', 'feedbackStatus', 'featureImportance'].forEach((id) => { $(id).replaceChildren(); });
     ['modelName', 'modelHorizon', 'datasetInfo', 'positiveRate', 'prAuc', 'f2Score', 'brierScore', 'rocAuc', 'threshold', 'prevalence', 'matrixTn', 'matrixFp', 'matrixFn', 'matrixTp'].forEach((id) => { $(id).textContent = '—'; });
@@ -606,6 +695,8 @@
   $('optionalSignIn').addEventListener('click', () => { lockSession('Sign in with an account, or return to the local demo.'); $('username').focus(); });
   $('demoEnter').addEventListener('click', enterDemo); $('retryAuth').addEventListener('click', configureAuth);
   $('refreshButton').addEventListener('click', () => refreshAll(true));
+  window.addEventListener('pagehide', disposeAlarmAudio);
+  window.addEventListener('beforeunload', disposeAlarmAudio);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { clearTimeout(state.pollTimer); clearTimeout(state.fullPollTimer); }
     else if (state.active && !state.recovery) refreshAll();

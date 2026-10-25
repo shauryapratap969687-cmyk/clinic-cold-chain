@@ -151,6 +151,73 @@ test('a suspended browser audio context is primed by the user gesture before ala
   assert.equal(ui.getBeepStarts(), 4);
 });
 
+test('warning and critical system status wait for permission, then start the alarm automatically', async (t) => {
+  const ui = setup({ audio: true }); t.after(() => ui.dom.window.close());
+  await until(() => ui.$('systemHealth').textContent === 'Healthy' && !ui.$('refreshButton').disabled);
+
+  ui.live.summary.system_health = 'Warning';
+  ui.$('refreshButton').click();
+  await until(() => ui.$('systemHealth').textContent === 'Warning' && /Enable alarm sound/.test(ui.$('alarmSoundStatus').textContent));
+  assert.equal(ui.getBeepStarts(), 0);
+
+  ui.$('alarmSoundButton').click();
+  await until(() => /Alarm sounding automatically/.test(ui.$('alarmSoundStatus').textContent));
+  assert.equal(ui.getBeepStarts(), 4);
+
+  ui.live.summary.system_health = 'Critical';
+  ui.$('refreshButton').click();
+  await until(() => ui.$('systemHealth').textContent === 'Critical' && /Alarm sounding automatically/.test(ui.$('alarmSoundStatus').textContent));
+});
+
+test('system alarm does not restart for repeated responses, stays active across alert levels, and stops when healthy', async (t) => {
+  const ui = setup({ audio: true }); t.after(() => ui.dom.window.close());
+  await until(() => ui.$('systemHealth').textContent === 'Healthy' && !ui.$('refreshButton').disabled);
+  ui.$('alarmSoundButton').click();
+  await until(() => /test beep played/.test(ui.$('alarmSoundStatus').textContent));
+
+  ui.live.summary.system_health = 'Warning';
+  ui.$('refreshButton').click();
+  await until(() => /Alarm sounding automatically/.test(ui.$('alarmSoundStatus').textContent));
+  const warningStarts = ui.getBeepStarts();
+  ui.$('refreshButton').click();
+  await until(() => ui.$('systemHealth').textContent === 'Warning');
+  await delay(80);
+  assert.equal(ui.getBeepStarts(), warningStarts);
+
+  ui.live.summary.system_health = 'Critical';
+  ui.$('refreshButton').click();
+  await until(() => ui.$('systemHealth').textContent === 'Critical' && /Alarm sounding automatically/.test(ui.$('alarmSoundStatus').textContent));
+  assert.equal(ui.getBeepStarts(), warningStarts);
+
+  ui.live.summary.system_health = 'Healthy';
+  ui.$('refreshButton').click();
+  await until(() => ui.$('systemHealth').textContent === 'Healthy' && !/Alarm sounding automatically/.test(ui.$('alarmSoundStatus').textContent));
+  const clearedStarts = ui.getBeepStarts();
+  await delay(80);
+  assert.equal(ui.getBeepStarts(), clearedStarts);
+});
+
+test('muting stops active playback and unmuting resumes it while the status remains in warning', async (t) => {
+  const ui = setup({ audio: true }); t.after(() => ui.dom.window.close());
+  await until(() => ui.$('systemHealth').textContent === 'Healthy' && !ui.$('refreshButton').disabled);
+  ui.$('alarmSoundButton').click();
+  await until(() => /test beep played/.test(ui.$('alarmSoundStatus').textContent));
+
+  ui.live.summary.system_health = 'Warning';
+  ui.$('refreshButton').click();
+  await until(() => /Alarm sounding automatically/.test(ui.$('alarmSoundStatus').textContent));
+  ui.$('alarmSoundButton').click();
+  assert.equal(ui.$('alarmSoundButton').textContent, 'Enable alarm sound');
+  assert.match(ui.$('alarmSoundStatus').textContent, /Alarm muted/);
+  const mutedStarts = ui.getBeepStarts();
+  await delay(80);
+  assert.equal(ui.getBeepStarts(), mutedStarts);
+
+  ui.$('alarmSoundButton').click();
+  await until(() => /Alarm sounding automatically/.test(ui.$('alarmSoundStatus').textContent));
+  assert(ui.getBeepStarts() > mutedStarts);
+});
+
 test('system health reflects a thermal critical state even if summary is stale', async (t) => {
   const ui = setup(); t.after(() => ui.dom.window.close());
   await until(() => ui.$('systemHealth').textContent === 'Healthy' && !ui.$('refreshButton').disabled);
