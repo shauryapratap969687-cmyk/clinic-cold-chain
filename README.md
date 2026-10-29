@@ -1,4 +1,37 @@
-# ColdChain / Control Room
+# CodeFlow / ColdChain Control Room
+
+The default browser surface is **CodeFlow**, an evidence-first code visualizer
+and learning workspace. The original ColdChain operational prototype remains
+available separately at <http://127.0.0.1:8000/coldchain> (or `/cold-chain`).
+Its clinic dashboard contains the simulated priority ranking and SMS states;
+the CodeFlow surface remains separate at `/`.
+
+## CodeFlow
+
+Open <http://127.0.0.1:8000/> (or `/visualizer`, `/examples`, `/learn`, and
+`/challenges`). CodeFlow supports editable source, local persistence, import /
+export, playback, variables, call stacks, diagnostics, reviewable diffs, and
+real server execution when the execution service is reachable.
+
+- **Python:** isolated CPython subprocess with bounded stdout, runtime, and
+  trace snapshots. Imports, classes, and other unsafe constructs are rejected
+  by the explicit teaching-subset boundary; those are reported as unsupported,
+  not silently executed.
+- **JavaScript:** restricted Node `vm` subprocess with real output and errors.
+  This adapter intentionally reports a limited trace: it does not claim
+  line-level locals.
+- **C / C++:** language-story UI only in this build. They are not labelled as
+  executable and no runtime values are invented.
+- **AI companion:** optional server-side OpenAI-compatible chat completions.
+  Source is sent only after the user chooses an AI action. Missing credentials
+  return an explicit setup status, while local explanations and execution stay
+  usable. AI fix proposals are shown in a diff and require approval before
+  `Verify & run` executes the updated source.
+
+CodeFlow API routes are `/api/codeflow/config`, `/api/codeflow/execute`,
+`/api/codeflow/verify`, and `/api/codeflow/ai`. Limits and provider setup are
+documented in `.env.example`; execution and AI requests also have bounded
+per-client rate limits.
 
 A self-contained FastAPI + XGBoost operational prototype with a responsive
 dashboard, durable SQLite history, authenticated roles, telemetry ingestion,
@@ -45,6 +78,26 @@ uv venv .venv --python 3.11
 uv pip install --python .venv\Scripts\python.exe -r requirements.txt
 .venv\Scripts\python.exe -m backend.train --days 240 --seed 42
 .venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+Training uses the packaged **SIMULATED** v3 clinic dataset at
+`datasets/clinic_cold_chain_v3/synthetic_clinic_data.csv` when it is available.
+The loader maps the noisy fridge/weather fields into the existing feature
+contract, uses `breach_next_6h` as the six-hour target, and keeps future breach,
+true-temperature, SMS, backup-response, and priority fields out of the model
+inputs. The raw archive also includes `clinics.csv`, `outage_events.csv`, and
+`sms_log.csv` for analysis and reproducibility.
+
+To train from another compatible CSV:
+
+```powershell
+.venv\Scripts\python.exe -m backend.train --dataset path\to\dataset.csv
+```
+
+To use the original built-in generator instead:
+
+```powershell
+.venv\Scripts\python.exe -m backend.train --generated --days 240 --seed 42
 ```
 
 Open <http://127.0.0.1:8000>.
@@ -111,15 +164,36 @@ the explicit demo policy limits of below `2°C` or above `8°C`.
 
 ## SIMULATED physics-based thermal forecast
 
-The prototype includes a separate thermal forecast alongside the existing XGBoost risk prediction. `backend/thermal.py` uses Newton's law of cooling for ambient heat exchange and a bounded refrigerator compressor term for powered operation. Synthetic trajectories include insulation variation, door openings, feeder/power outages, local cooling failures, freeze events and reproducible residual noise.
+The prototype now includes a separate thermal forecast alongside the existing
+XGBoost risk prediction. `backend/thermal.py` uses Newton's law of cooling for
+ambient heat exchange and a bounded refrigerator compressor term for powered
+operation. Synthetic trajectories also include insulation variation, door
+openings, feeder/power outages, local cooling failures, freeze events and
+reproducible residual noise.
 
-- The next six hours are simulated from current temperature, ambient trajectory, power state, cooling-failure state, door load and insulation.
-- The dashboard shows the simulated measured temperature, six-hour forecast, uncertainty band, exact 1/2/6-hour power-cut horizons, and a time-to-limit value only when the mean trajectory crosses a configured limit.
-- Missing/stale or external-mode inputs are marked unreliable and do not show a countdown. Displayed forecast values are labelled `SIMULATED`.
-- The XGBoost target and feature list remain separate from this physics forecast.
-- `/api/model` reports held-out synthetic validation metrics: MAE, RMSE, threshold-crossing-time error and failure-scenario error. These are not real refrigerator or vaccine-accuracy claims.
+- The next six hours are simulated from the current temperature, ambient
+  trajectory, power state, cooling-failure state, door load and insulation.
+- The dashboard's **Fridge temperature after a power cut** panel reuses the
+  selected clinic and existing `Trip feeder` / `Local fault` controls. It shows
+  the hypothetical cut temperature after exactly 1, 2 and 6 hours, a six-hour
+  graph, the 2–8°C safe range, the configured early-warning limit, and a
+  countdown only when supported by the simulated mean trajectory.
+- The dashboard shows the simulated measured temperature, six-hour forecast,
+  uncertainty band, and a time-to-limit value only when the mean trajectory
+  crosses a configured limit. Otherwise it explicitly says that no breach is
+  predicted within the horizon.
+- Missing/stale or external-mode inputs are marked unreliable and do not show a
+  countdown. All displayed forecast values are labelled `SIMULATED`.
+- The XGBoost target and feature list remain unchanged. Its risk probability is
+  still separate from the physics forecast.
+- `/api/model` reports held-out synthetic validation metrics: MAE, RMSE,
+  threshold-crossing-time error, and failure-scenario error. These metrics are
+  synthetic validation only and are not real refrigerator or vaccine accuracy.
 
-The live simulation seed and forecast horizon can be configured with `COLDCHAIN_SIMULATION_SEED` and `COLDCHAIN_THERMAL_FORECAST_HORIZON_HOURS`.
+The synthetic generator accepts a reproducible `seed` through
+`SyntheticConfig` and the training CLI. The live simulation seed and forecast
+horizon can be configured with `COLDCHAIN_SIMULATION_SEED` and
+`COLDCHAIN_THERMAL_FORECAST_HORIZON_HOURS`.
 
 ## API
 
@@ -143,8 +217,9 @@ requests. Interactive OpenAPI documentation is available at `/docs`.
 |---|---|---|
 | `GET` | `/api/auth/me` | Current authenticated user and DB-checked role |
 | `GET` | `/api/state` | Current feeders, clinics, telemetry and risk state |
+| `GET` | `/api/priority` | Simulated v3 urgency ranking, safety slack, and SMS states |
 | `GET` | `/api/model` | Held-out synthetic metrics and charts |
-| `GET` | `/api/alerts` | Active/recovered incidents and escalation metadata |
+| `GET` | `/api/alerts` | Incidents and escalation metadata; use `?include_resolved=false` for the current queue |
 | `GET` | `/api/weather` | Context weather, provider/fallback/cache status |
 | `GET` | `/api/monitoring` | Data quality, prediction history, outcomes and drift proxy |
 | `GET` | `/api/events` | Bounded operational event history |
@@ -156,6 +231,7 @@ requests. Interactive OpenAPI documentation is available at `/docs`.
 | Method | Path | Allowed roles | Purpose |
 |---|---|---|---|
 | `POST` | `/api/simulate` | Operator/admin | Run synthetic feeder, clinic, freeze, reset or time actions |
+| `POST` | `/api/sms/reply` | Clinic/admin | Apply a simulated `YES`/`NO` (or `1`/`2`) backup-power reply |
 | `POST` | `/api/telemetry/clinic` | Clinic/admin | Ingest a validated clinic observation |
 | `POST` | `/api/telemetry/feeder` | Grid/admin | Ingest a validated shared-feeder observation |
 | `POST` | `/api/alerts/{id}/acknowledge` | Operator/admin | Record alert ownership; does not resolve the incident |
@@ -186,6 +262,13 @@ to external mode; simulation mutations are then blocked until an explicit Reset.
 ### Important response fields
 
 Each clinic in `/api/state` contains:
+
+The response also includes `priority_rank`, `priority_rank_before_followup`,
+`hours_until_unusable`, `priority_slack_h`, `has_backup`, `power_source`, and
+`sms_state`. The ranking is simulated as `hours_until_unusable - travel_time_h`,
+with farther clinics breaking ties. SMS states are `normal`,
+`critical_no_sms`, `critical_unconfirmed`, `needs_help`, `backup_in_use`, and
+`backup_exhausted`. All ranking, backup, and SMS values are simulated.
 
 ```json
 {
@@ -296,15 +379,59 @@ Weather is context-only and is not silently inserted into the historical model.
 
 ## Simulated outage-forecast review
 
-`backend/outage_analysis.py` adds a separate calibrated XGBoost outage-start review without changing the existing synthetic spoilage target. It uses separate tuning and evaluation worlds, a six-hour horizon, tuning-only threshold selection, and keeps new outages separate from already-ongoing outage persistence. All results are **SIMULATED** diagnostics.
+The repository does not contain the LightGBM outage pipeline described in the
+external review. Its existing model remains XGBoost and predicts the synthetic
+spoilage proxy. `backend/outage_analysis.py` adds a separate, calibrated
+XGBoost outage-start review without changing that target.
 
-Run the review with:
+The review uses separate tuning and evaluation worlds (`2025` and `2026`), a
+six-hour horizon, and thresholds selected only in the tuning world. It reports
+new outages while the grid is up separately from an already-ongoing outage
+persistence case. All numbers below are **SIMULATED**.
+
+### Review results (180 days per world, seeds 2025/2026)
+
+- **Before the weather mechanism change:** the repository baseline had
+  XGBoost outage-start ROC-AUC `0.543`, PR-AUC `0.0037`, and top-5% lift
+  `1.58x`. In the early-warning experiment, the combined score warned before
+  power failure for `29/273` breach events (`10.62%`, bootstrap 95% CI
+  `7.13–13.92%`), warned only after failure for `241/273` (`88.28%`), and
+  missed `3/273` (`1.10%`).
+- **After the generator change:** the XGBoost outage-start ROC-AUC is `0.6668`,
+  PR-AUC `0.0202`, and top-5% lift `4.886x`. The hour-plus-rain rule is weaker
+  (`ROC-AUC 0.6188`, `PR-AUC 0.0098`), so the model result is not being
+  represented as a rule-only result.
+- The final evaluation contains `356` breach events. The combined score warns
+  before power failure for `83/356` (`23.31%`, bootstrap 95% CI
+  `18.67–27.81%`), only after failure for `271/356` (`76.12%`, CI
+  `71.76–80.06%`), and does not warn for `2/356` (`0.56%`, CI `0–1.40%`).
+- For the separate already-ongoing outage case, the persistence baseline has
+  PR-AUC `0.305`, ROC-AUC `0.2456`, and top-5% lift `0x`. It is not mixed with
+  new-outage metrics.
+- The synthetic signal is intentionally present because the generator now
+  makes shared feeder outage hazard depend strongly on current and next-six-
+  hour rain/wind stress. Day-of-week is not used to generate outage hazard;
+  its final permutation AP decrease is negative (`-0.001135`).
+- The final outage model calibration has Brier score `0.006806`; the largest
+  permutation AP decrease is next-six-hour rain (`0.013488`).
+- The combined early-warning lead-time mean is `2.096h` versus `2.667h` for
+  the plain 6°C pre-alarm. Therefore the combined risk **does not improve mean
+  lead time** in this evaluation. It does increase the share of breaches with
+  any pre-failure warning (`23.31%` vs `3.37%` for the plain pre-alarm).
+  Using the documented synthetic two-hour travel assumption, `40.96%` of the
+  combined pre-failure warnings meet that travel time, versus `58.33%` for the
+  plain pre-alarm.
+
+Run the review and write a JSON report with:
 
 ```powershell
-.venv\Scripts\python.exe -m backend.outage_analysis --days 180 --tuning-seed 2025 --evaluation-seed 2026 --bootstrap-samples 500 --output reports\outage_review_final.json
+.venv\Scripts\python.exe -m backend.outage_analysis `
+  --days 180 --tuning-seed 2025 --evaluation-seed 2026 `
+  --bootstrap-samples 500 --output reports\outage_review_final.json
 ```
 
-These results are not real-world outage, refrigerator, vaccine or clinical performance claims.
+These are simulator diagnostics, not real-world outage, refrigerator, vaccine,
+or clinical performance claims.
 
 ## Checks
 

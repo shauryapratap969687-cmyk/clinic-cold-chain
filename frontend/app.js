@@ -41,6 +41,10 @@
   const role = () => state.user && state.user.role;
   const permitted = (kind) => ({ feeder: ['admin', 'grid_operator'], clinic: ['admin', 'clinic_operator'], feedback: ['admin', 'clinic_operator'], audit: ['admin', 'auditor'], write: ['admin', 'clinic_operator', 'grid_operator'] }[kind] || []).includes(role());
   const riskClass = (value) => ({ safe: 'safe', healthy: 'safe', critical: 'critical', high: 'critical', warning: 'warning', medium: 'warning', low: 'safe' }[String(value).toLowerCase()] || 'unknown');
+  const SMS_STATE_LABELS = { normal: 'Normal', critical_no_sms: 'Critical · no backup', critical_unconfirmed: 'Critical · awaiting reply', needs_help: 'Needs help', backup_in_use: 'Backup in use', backup_exhausted: 'Backup exhausted' };
+  const SMS_STATE_CLASSES = { normal: 'safe', critical_no_sms: 'critical', critical_unconfirmed: 'warning', needs_help: 'critical', backup_in_use: 'safe', backup_exhausted: 'critical' };
+  const smsStateLabel = (value) => SMS_STATE_LABELS[String(value)] || 'Unknown';
+  const smsStateClass = (value) => SMS_STATE_CLASSES[String(value)] || 'unknown';
   const THERMAL_ALARM_THRESHOLD = 6;
   const ALARM_FIELDS = ['temperature_alarm', 'temperature_alarm_active', 'thermal_alarm', 'thermal_alarm_active', 'critical_thermal_alarm', 'alarm_active', 'temperature_alarm_status', 'thermal_alarm_status', 'alarm_state'];
   const alarmText = (value) => String(value == null ? '' : value).toLowerCase().replace(/[_-]+/g, ' ');
@@ -291,6 +295,7 @@
       control.title = !permitted(kind) ? 'Your role has read-only access to this control.' : externalLocked ? 'External readings are active. Explicitly reset to return to the synthetic sandbox.' : '';
     });
     document.querySelectorAll('[data-ack]').forEach((control) => { control.disabled = locked || !permitted('write') || control.dataset.done === 'true'; });
+    document.querySelectorAll('[data-sms-reply]').forEach((control) => { control.disabled = locked || !permitted('clinic'); });
     document.querySelectorAll('[data-feedback-control]').forEach((control) => { control.disabled = locked || !permitted('feedback'); });
     $('refreshButton').disabled = state.busy || state.reading;
     $('busyNote').textContent = state.busy ? 'Saving action… please wait' : state.recovery ? 'Refresh state before retrying an action' : !permitted('write') ? 'Read-only role · operational writes disabled' : 'Actions are serialized · permissions enforced by server';
@@ -475,15 +480,24 @@
     const clinics = Array.isArray(data.clinics) ? data.clinics : [];
     const query = els.search.value.trim().toLowerCase(); const risk = els.riskFilter.value; const feeder = els.feederFilter.value;
     const levelFor = (clinic) => clinic.data_quality && clinic.data_quality !== 'ok' ? 'Unknown' : clinic.too_cold || clinic.too_hot || (finite(clinic.temperature_c) && (Number(clinic.temperature_c) < 2 || Number(clinic.temperature_c) > 8)) ? 'Critical' : ['Safe', 'Warning', 'Critical'].includes(clinic.risk_level) ? clinic.risk_level : 'Unknown';
-    const rows = clinics.filter((clinic) => (!query || `${clinic.id} ${clinic.name}`.toLowerCase().includes(query)) && (risk === 'all' || levelFor(clinic) === risk) && (feeder === 'all' || String(clinic.feeder_id) === feeder));
+    const rows = clinics.filter((clinic) => (!query || `${clinic.id} ${clinic.name}`.toLowerCase().includes(query)) && (risk === 'all' || levelFor(clinic) === risk) && (feeder === 'all' || String(clinic.feeder_id) === feeder)).sort((a, b) => (Number(a.priority_rank) || 999) - (Number(b.priority_rank) || 999));
     els.tableBody.innerHTML = rows.length ? rows.map((clinic) => {
       const level = levelFor(clinic); const levelClass = riskClass(level); const power = clinic.power_on === true; const cold = clinic.too_cold || (finite(clinic.temperature_c) && Number(clinic.temperature_c) < 2); const hot = clinic.too_hot || (finite(clinic.temperature_c) && Number(clinic.temperature_c) > 8); const alarm = temperatureAlarm(clinic, data); const alarmBadge = alarm.active ? `<span class="temperature-alarm-badge">${escapeHtml(alarm.label || 'Temperature alarm')} · &gt;${escapeHtml(formatAlarmThreshold(alarm.threshold))}°C</span>` : alarm.stale ? '<span class="temperature-alarm-badge stale">Last known alarm · current reading stale</span>' : '';
       const hazard = cold || hot ? `<span class="hazard-tag">${clinic.data_quality === 'ok' ? 'Observed' : 'Last known'}: ${cold ? 'too cold (<2°C)' : 'too hot (>8°C)'}</span>` : '';
       const powerLabel = clinic.data_quality && clinic.data_quality !== 'ok' ? 'Unknown / last known' : clinic.power_on == null ? 'Unknown' : power ? 'Online' : 'Offline';
       const status = clinic.status ? `<span class="clinic-id">${escapeHtml(clinic.status)}</span>` : '';
-       return `<tr><td><span class="clinic-name">${escapeHtml(clinic.name)}</span><span class="clinic-id">${escapeHtml(clinic.id)}</span>${status}<span class="clinic-id">Source: ${escapeHtml(text(clinic.source || clinic.risk_source))} · Quality: ${escapeHtml(text(clinic.data_quality))}</span></td><td class="feeder-cell">${escapeHtml(feederName(clinic.feeder_id))}</td><td><span class="power-state ${power && clinic.data_quality === 'ok' ? '' : 'off'}"><i></i>${powerLabel}</span></td><td><div class="temp-stack"><span class="temp ${cold ? 'cold' : hot || alarm.active ? 'hot alarm' : ''}">${formatNumber(clinic.temperature_c, 1)}${finite(clinic.temperature_c) ? '°C' : ''}</span>${thermalForecastMarkup(clinic)}${alarmBadge}${hazard}</div></td><td><span class="weather"><span>☂ <b>${formatNumber(clinic.forecast_rain_next_6h, 1)} mm</b></span><span>≋ <b>${formatNumber(clinic.forecast_wind_next_6h, 1)} km/h</b></span></span></td><td><div class="risk-cell"><span class="risk-value">${percent(clinic.risk_probability)}</span><span class="badge ${levelClass}">${escapeHtml(level)}</span></div></td></tr>`;
-    }).join('') : '<tr><td colspan="6" class="empty-cell">No clinics match the current filters.</td></tr>';
-     els.tableSummary.textContent = `Showing ${rows.length} of ${clinics.length} clinics · SIMULATED thermal forecasts use Newton cooling with uncertainty; model probabilities appear only when available. Observed temperature violations elevate risk independently. Readings with stale quality are last known.`;
+      const smsState = String(clinic.sms_state || (clinic.sms && clinic.sms.state) || 'normal');
+      const sms = clinic.sms || {};
+      const replyOptions = Array.isArray(sms.reply_options) ? sms.reply_options : [];
+      const replyMarkup = replyOptions.length ? `<span class="sms-replies">${replyOptions.map((reply) => `<button type="button" class="sms-reply" data-sms-reply="${escapeHtml(reply)}" data-clinic-id="${escapeHtml(clinic.id)}">${escapeHtml(reply)}</button>`).join('')}</span>` : '';
+      const rank = finite(clinic.priority_rank) ? `#${formatNumber(clinic.priority_rank, 0)}` : '—';
+      const beforeRank = finite(clinic.priority_rank_before_followup) ? `pre #${formatNumber(clinic.priority_rank_before_followup, 0)}` : '';
+      const slack = finite(clinic.priority_slack_h) ? `${formatNumber(clinic.priority_slack_h, 1)}h` : '—';
+      const slackClass = finite(clinic.priority_slack_h) && Number(clinic.priority_slack_h) < 0 ? 'critical' : finite(clinic.priority_slack_h) && Number(clinic.priority_slack_h) < 2 ? 'warning' : 'safe';
+      return `<tr><td class="priority-cell"><strong>${rank}</strong><small>${escapeHtml(beforeRank)}</small></td><td><span class="clinic-name">${escapeHtml(clinic.name)}</span><span class="clinic-id">${escapeHtml(clinic.id)}</span>${status}<span class="clinic-id">Source: ${escapeHtml(text(clinic.source || clinic.risk_source))} · Quality: ${escapeHtml(text(clinic.data_quality))}</span></td><td class="feeder-cell">${escapeHtml(feederName(clinic.feeder_id))}</td><td><span class="power-state ${power && clinic.data_quality === 'ok' ? '' : 'off'}"><i></i>${powerLabel}</span><small class="power-source">${escapeHtml(clinic.power_source || '')}</small></td><td><div class="temp-stack"><span class="temp ${cold ? 'cold' : hot || alarm.active ? 'hot alarm' : ''}">${formatNumber(clinic.temperature_c, 1)}${finite(clinic.temperature_c) ? '°C' : ''}</span>${thermalForecastMarkup(clinic)}${alarmBadge}${hazard}</div></td><td><span class="weather"><span>☂ <b>${formatNumber(clinic.forecast_rain_next_6h, 1)} mm</b></span><span>≋ <b>${formatNumber(clinic.forecast_wind_next_6h, 1)} km/h</b></span></span></td><td><div class="risk-cell"><span class="risk-value">${percent(clinic.risk_probability)}</span><span class="badge ${levelClass}">${escapeHtml(level)}</span></div></td><td><span class="priority-slack ${slackClass}">${slack}</span><small class="priority-sub">8°C minus travel</small></td><td><span class="sms-state ${smsStateClass(smsState)}">${escapeHtml(smsStateLabel(smsState))}</span>${replyMarkup}</td></tr>`;
+    }).join('') : '<tr><td colspan="9" class="empty-cell">No clinics match the current filters.</td></tr>';
+     const policy = data.summary && data.summary.priority_policy ? ` · ${data.summary.priority_policy}` : '';
+     els.tableSummary.textContent = `Showing ${rows.length} of ${clinics.length} clinics · ranked by simulated 8°C safety slack${policy}. SMS states and replies are simulated; model probabilities appear only when available. Observed temperature violations elevate risk independently.`;
   }
 
   function renderState(data, receivedAt) {
@@ -694,9 +708,9 @@
       connection(false, `Disconnected · ${state.received ? `Last known data received ${localTime(state.received)}` : 'No current data'} · ${error.message}`);
     }
     if (generation !== state.generation || !state.active) return;
-    const names = ['model', 'alerts', 'weather', 'monitoring', 'policy', ...(permitted('audit') ? ['audit'] : [])];
-    const results = await Promise.allSettled(names.map(async (name) => {
-      const data = await api(`/api/${name}`);
+     const names = ['model', 'alerts', 'weather', 'monitoring', 'policy', ...(permitted('audit') ? ['audit'] : [])];
+     const results = await Promise.allSettled(names.map(async (name) => {
+       const data = await api(name === 'alerts' ? '/api/alerts?include_resolved=false' : `/api/${name}`);
       if (generation !== state.generation || !state.active) return;
       if (name === 'model') renderModel(data); else panels[name](data);
       state.panels[name] = new Date().toISOString();
@@ -736,6 +750,12 @@
       if (generation === state.generation && state.active) { state.busy = false; setControlsDisabled(false); if (!state.recovery) await refreshAll(); }
     }
   }
+  function sendSmsReply(clinicId, reply) {
+    return mutate('/api/sms/reply', { clinic_id: clinicId, reply }, 'clinic', `Simulated SMS reply ${reply} recorded.`, (data) => {
+      if (!Array.isArray(data.clinics) || !Array.isArray(data.feeders)) { const error = new Error('SMS reply response could not be verified.'); error.ambiguous = true; throw error; }
+      const receivedAt = new Date().toISOString(); state.received = receivedAt; state.stateStale = false; renderState(data, receivedAt); renderTelemetry(data);
+    });
+  }
   function performAction(action, extra) {
     if (action === 'reset' && state.live && state.live.telemetry_mode === 'external' && !window.confirm('Switch from external telemetry to synthetic simulation? Active external readings will be replaced. Stored history is retained. Do not use this during operational monitoring.')) return;
     const kind = ['trip_feeder', 'restore_feeder'].includes(action) ? 'feeder' : ['local_fault', 'restore_clinic', 'freeze_clinic'].includes(action) ? 'clinic' : 'write';
@@ -751,6 +771,11 @@
   $('restoreClinic').addEventListener('click', () => performAction('restore_clinic', { clinic_id: els.clinicSelect.value }));
   $('freezeClinic').addEventListener('click', () => performAction('freeze_clinic', { clinic_id: els.clinicSelect.value }));
   $('advance1').addEventListener('click', () => performAction('advance', { hours: 1 })); $('advance6').addEventListener('click', () => performAction('advance', { hours: 6 })); $('resetSimulation').addEventListener('click', () => performAction('reset'));
+   els.tableBody.addEventListener('click', (event) => {
+     const button = event.target.closest('[data-sms-reply]');
+     if (!button || button.disabled) return;
+     sendSmsReply(button.dataset.clinicId, button.dataset.smsReply);
+   });
   els.search.addEventListener('input', () => state.live && renderTable(state.live)); els.riskFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.feederFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.clinicSelect.addEventListener('change', () => state.live && renderPowerCutForecast(state.live)); $('dismissError').addEventListener('click', hideError); els.alarmSoundButton.addEventListener('pointerdown', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('touchstart', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('click', toggleAlarmSound);
   window.addEventListener('resize', () => { if (state.live) renderPowerCutForecast(state.live); if (state.model && !els.modelContent.hidden) { drawChart($('reliabilityChart'), state.model.calibration, '#38d6c3', 'Reliability curve: observed outcome versus predicted probability'); drawChart($('rocChart'), state.model.roc_curve, '#f5a35b', 'ROC curve: true positive rate versus false positive rate'); } });
   $('alertsList').addEventListener('click', async (event) => {

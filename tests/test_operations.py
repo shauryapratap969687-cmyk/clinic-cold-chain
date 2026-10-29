@@ -186,6 +186,18 @@ def test_alert_ack_escalation_recovery_and_recurrence(runtime):
         assert all(e["payload"].get("sent") is False for e in client.get("/api/events?limit=500").json()["events"] if e["event_type"] == "alert.escalated")
 
 
+def test_alert_queue_can_exclude_resolved_history(runtime):
+    with TestClient(runtime()) as client:
+        client.post("/api/simulate", json={"action": "freeze_clinic", "clinic_id": "CL-01"}).raise_for_status()
+        active = client.get("/api/alerts?include_resolved=false")
+        assert active.status_code == 200
+        rows = active.json()["alerts"]
+        assert rows and all(row["status"] != "resolved" for row in rows)
+
+        client.post("/api/simulate", json={"action": "reset"}).raise_for_status()
+        assert client.get("/api/alerts?include_resolved=false").json()["alerts"] == []
+
+
 def required_mode(monkeypatch):
     monkeypatch.setattr(config, "AUTH_MODE", "required")
     monkeypatch.setattr(config, "DEMO_USERNAME", "test-admin")

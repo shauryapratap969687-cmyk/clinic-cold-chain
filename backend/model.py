@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from .features import FEATURE_COLUMNS, build_feature_frame
+from .dataset import DEFAULT_DATASET_PATH, load_training_dataset
 from .synthetic import SyntheticConfig, generate_dataset
 from .thermal import thermal_forecast_validation
 
@@ -63,8 +64,19 @@ def _choose_f2_threshold(y_true: np.ndarray, probabilities: np.ndarray) -> float
     return float(candidates[int(np.argmax(scores))])
 
 
-def train_and_persist(days: int = 240, seed: int = 42, artifact_dir: Path | None = None) -> dict[str, Any]:
-    """Train a reproducible model and write the CSV, joblib, and metrics JSON."""
+def train_and_persist(
+    days: int = 240,
+    seed: int = 42,
+    artifact_dir: Path | None = None,
+    dataset_path: Path | str | None = None,
+    use_packaged_dataset: bool = True,
+) -> dict[str, Any]:
+    """Train a reproducible model and write the CSV, joblib, and metrics JSON.
+
+    The packaged v3 clinic dataset is used by default when present.  The
+    original deterministic generator remains available with
+    ``use_packaged_dataset=False`` or when the packaged file is unavailable.
+    """
     import joblib
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import (average_precision_score, brier_score_loss, confusion_matrix,
@@ -72,8 +84,24 @@ def train_and_persist(days: int = 240, seed: int = 42, artifact_dir: Path | None
     from xgboost import XGBClassifier
     artifact_dir = Path(artifact_dir or ARTIFACT_DIR)
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    dataset = generate_dataset(SyntheticConfig(days=days, seed=seed))
+    if dataset_path is not None:
+        dataset, dataset_metadata = load_training_dataset(dataset_path)
+    elif use_packaged_dataset and DEFAULT_DATASET_PATH.exists():
+        dataset, dataset_metadata = load_training_dataset(DEFAULT_DATASET_PATH)
+    else:
+        dataset = generate_dataset(SyntheticConfig(days=days, seed=seed))
+        dataset_metadata = {
+            "source": "built-in synthetic generator",
+            "path": "generated at training time",
+            "raw_rows": int(len(dataset)),
+            "rows": int(len(dataset)),
+            "columns": int(len(dataset.columns)),
+            "clinic_count": int(dataset["clinic_id"].nunique()),
+            "target": "synthetic spoilage proxy",
+        }
     dataset.to_csv(artifact_dir / "dataset.csv", index=False)
+    timestamps = pd.to_datetime(dataset["timestamp"], utc=True)
+    actual_days = int((timestamps.max() - timestamps.min()).total_seconds() // (24 * 3600)) + 1
     masks = _chronological_ranges(dataset)
     y = dataset["spoilage"].to_numpy(dtype=int)
     x = dataset[FEATURE_COLUMNS].to_numpy(dtype=float)
@@ -127,13 +155,15 @@ def train_and_persist(days: int = 240, seed: int = 42, artifact_dir: Path | None
     metrics: dict[str, Any] = {
         **metric_values,
         "dataset": {
-            "days": days,
+            "days": actual_days,
+            "requested_days": days,
             "rows": int(len(dataset)),
             "positive_rate": float(y.mean()),
             "train_rows": int(masks["train"].sum()),
             "calibration_rows": int(masks["calibration"].sum()),
             "validation_rows": int(masks["validation"].sum()),
             "test_rows": int(masks["test"].sum()),
+            **dataset_metadata,
         },
         "calibration": _calibration_rows(test_y, test_prob),
         "feature_importance": [{"feature": name, "importance": float(value)}
@@ -142,8 +172,8 @@ def train_and_persist(days: int = 240, seed: int = 42, artifact_dir: Path | None
         "confusion_matrix": matrix,
         "roc_curve": [{"fpr": float(a), "tpr": float(b)} for a, b in zip(fpr, tpr)],
         "notes": [
-            "Synthetic demonstration data; not medical advice and not a validated clinical model.",
-            "spoilage is a synthetic proxy: the next six hours contain any temperature below 2C or above 8C for two consecutive hours.",
+            f"Training source: {dataset_metadata['source']}; all rows are simulated and not medical advice or a validated clinical model.",
+            "spoilage is a six-hour synthetic proxy: the target is breach_next_6h for the packaged v3 dataset, or the built-in freeze/hot excursion proxy when generated.",
             "Chronological train/calibration/validation/test splits use six-hour purges; the threshold is selected on validation only.",
         ],
     }

@@ -15,13 +15,25 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config
 from .alerts import sync_alerts
 from .auth import ROLES, Principal, current_principal, hash_password, issue_token, require_roles, verify_password
+from .codeflow import (
+    AI_RATE_LIMIT_PER_MINUTE,
+    EXECUTE_RATE_LIMIT_PER_MINUTE,
+    MAX_OUTPUT_BYTES,
+    MAX_SOURCE_CHARS,
+    MAX_TRACE_EVENTS,
+    TIMEOUT_SECONDS,
+    ask_codeflow_ai,
+    codeflow_config,
+    execute_codeflow,
+    verify_codeflow,
+)
 from .model import load_bundle
 from .simulation import Simulation
 from .storage import Storage, utc_now
@@ -66,6 +78,35 @@ class FeedbackRequest(BaseModel):
     prediction_id: int = Field(ge=1)
     actual_outcome: bool
     notes: str | None = Field(default=None, max_length=2000)
+
+
+class SMSReplyRequest(BaseModel):
+    clinic_id: str = Field(pattern=r"^CL-(0[1-9]|1[0-9]|20)$")
+    reply: str = Field(min_length=1, max_length=16)
+
+
+class CodeFlowRequest(BaseModel):
+    """Bounded source request shared by execute, verify, and legacy run."""
+
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
+
+    source: str = Field(min_length=1, max_length=MAX_SOURCE_CHARS, strict=True)
+    language: str = Field(default="python", min_length=1, max_length=32, strict=True)
+    timeout_seconds: float | None = Field(default=None, gt=0, le=TIMEOUT_SECONDS, strict=True)
+    max_output_bytes: int | None = Field(default=None, ge=1, le=MAX_OUTPUT_BYTES, strict=True)
+    max_trace_events: int | None = Field(default=None, ge=1, le=MAX_TRACE_EVENTS, strict=True)
+
+
+class CodeFlowAIRequest(BaseModel):
+    model_config = {"extra": "forbid", "allow_inf_nan": False}
+
+    action: str = Field(default="ask", pattern=r"^(ask|explain|review|fix|fix_all)$", strict=True)
+    question: str | None = Field(default=None, max_length=4000, strict=True)
+    prompt: str | None = Field(default=None, max_length=4000, strict=True)
+    source: str | None = Field(default=None, max_length=MAX_SOURCE_CHARS, strict=True)
+    language: str = Field(default="python", min_length=1, max_length=32, strict=True)
+    diagnostics: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
+    execution: dict[str, Any] | None = None
 
 
 def _validate_request(request: SimulationRequest, simulation: Simulation) -> None:
@@ -115,7 +156,9 @@ def create_app() -> FastAPI:
     config.validate()
     runtime_lock = RLock()
     login_lock = RLock()
+    codeflow_rate_lock = RLock()
     login_attempts: OrderedDict[str, deque[float]] = OrderedDict()
+    codeflow_attempts: OrderedDict[str, deque[float]] = OrderedDict()
     dummy_hash = hash_password("unusable-login-timing-placeholder")
 
     @asynccontextmanager
@@ -171,7 +214,7 @@ def create_app() -> FastAPI:
                 except Exception:
                     bundle = None
                 app.state.bundle = bundle
-                app.state.simulation = Simulation(bundle=bundle, seed=42)
+                app.state.simulation = Simulation(bundle=bundle, seed=config.SIMULATION_SEED)
                 snapshot = store.load_snapshot()
                 if snapshot:
                     app.state.simulation.restore_snapshot(snapshot)
@@ -284,6 +327,46 @@ def create_app() -> FastAPI:
             _record_state(storage(), result, principal.username, f"simulation.{request.action}")
             return _state_response(result)
 
+    @app.get("/api/priority")
+    def priority(_: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
+        """Return the simulated v3 urgency ranking and SMS state summary."""
+        current = ensure_runtime()
+        state = current.state()
+        return {
+            "timestamp": state["timestamp"],
+            "simulated": True,
+            "policy": state["priority"],
+            "sms_state_counts": state["summary"]["sms_state_counts"],
+            "clinics": [
+                {
+                    "id": clinic["id"],
+                    "name": clinic["name"],
+                    "priority_rank": clinic["priority_rank"],
+                    "priority_rank_before_followup": clinic["priority_rank_before_followup"],
+                    "priority_slack_h": clinic["priority_slack_h"],
+                    "hours_until_unusable": clinic["hours_until_unusable"],
+                    "travel_time_h": clinic["travel_time_h"],
+                    "sms_state": clinic["sms_state"],
+                    "sms": clinic["sms"],
+                }
+                for clinic in sorted(state["clinics"], key=lambda row: row["priority_rank"] or 999)
+            ],
+        }
+
+    @app.post("/api/sms/reply")
+    def sms_reply(request: SMSReplyRequest, principal: Principal = Depends(require_roles("clinic_operator", "admin"))) -> dict[str, Any]:
+        """Apply a simulated YES/NO SMS reply from a clinic worker."""
+        current = ensure_runtime()
+        try:
+            result = current.reply_sms(request.clinic_id, request.reply)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Clinic not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        result["sms_reply_accepted"] = str(request.reply).strip().upper()
+        _record_state(storage(), result, principal.username, "sms.reply", {request.clinic_id})
+        return _state_response(result)
+
     @app.get("/api/model")
     def model_info(_: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
         bundle = ensure_runtime().bundle
@@ -336,9 +419,12 @@ def create_app() -> FastAPI:
         return get_weather()
 
     @app.get("/api/alerts")
-    def alerts(include_acknowledged: bool = Query(True), _: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
+    def alerts(include_acknowledged: bool = Query(True), include_resolved: bool = Query(True), _: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
         maintenance()
-        return {"alerts": [_alert_payload(alert) for alert in _as_json_rows(storage().list_alerts(include_acknowledged))]}
+        rows = storage().list_alerts(include_acknowledged)
+        if not include_resolved:
+            rows = [row for row in rows if row.get("status") != "resolved"]
+        return {"alerts": [_alert_payload(alert) for alert in _as_json_rows(rows)]}
 
     @app.post("/api/alerts/{alert_id}/acknowledge")
     def acknowledge(alert_id: int, principal: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin"))) -> dict[str, Any]:
@@ -393,8 +479,99 @@ def create_app() -> FastAPI:
                 "escalation": f"In-app worker every {config.WORKER_INTERVAL_SECONDS:g}s; UTC elapsed-time stages at {config.ALERT_ESCALATION_SECONDS}s and {2 * config.ALERT_ESCALATION_SECONDS}s. Acknowledgement does not resolve. Demo-log outbox records intent only, with no external messages sent.",
                 "deployment": "Single application process per SQLite runtime; TLS, backups, user provisioning, and retention are operator responsibilities."}
 
+    def _codeflow_limits(request: CodeFlowRequest) -> dict[str, Any]:
+        return {
+            name: value
+            for name, value in {
+                "timeout_seconds": request.timeout_seconds,
+                "max_output_bytes": request.max_output_bytes,
+                "max_trace_events": request.max_trace_events,
+            }.items()
+            if value is not None
+        }
+
+    def _check_codeflow_rate(http_request: Request, bucket: str, limit: int) -> None:
+        """Bound expensive CodeFlow actions per client without trusting proxies."""
+        key = f"{http_request.client.host if http_request.client else 'local'}:{bucket}"
+        now = time.monotonic()
+        with codeflow_rate_lock:
+            attempts = codeflow_attempts.setdefault(key, deque(maxlen=limit))
+            codeflow_attempts.move_to_end(key)
+            while attempts and attempts[0] <= now - 60:
+                attempts.popleft()
+            if len(attempts) >= limit:
+                raise HTTPException(status_code=429, detail="CodeFlow rate limit reached; retry in one minute", headers={"Retry-After": "60"})
+            attempts.append(now)
+            while len(codeflow_attempts) > 2048:
+                codeflow_attempts.popitem(last=False)
+
+    @app.get("/api/codeflow/config")
+    def codeflow_runtime_config() -> dict[str, Any]:
+        return codeflow_config()
+
+    @app.get("/api/codeflow/capabilities", include_in_schema=False)
+    def codeflow_capabilities() -> dict[str, Any]:
+        return codeflow_config()
+
+    @app.post("/api/codeflow/execute")
+    def codeflow_execute(request: CodeFlowRequest, http_request: Request) -> dict[str, Any]:
+        _check_codeflow_rate(http_request, "execute", EXECUTE_RATE_LIMIT_PER_MINUTE)
+        return execute_codeflow(request.source, request.language, _codeflow_limits(request))
+
+    @app.post("/api/codeflow/run", include_in_schema=False)
+    def codeflow_run(request: CodeFlowRequest, http_request: Request) -> dict[str, Any]:
+        _check_codeflow_rate(http_request, "execute", EXECUTE_RATE_LIMIT_PER_MINUTE)
+        return execute_codeflow(request.source, request.language, _codeflow_limits(request))
+
+    @app.post("/api/codeflow/verify")
+    def codeflow_verify(request: CodeFlowRequest) -> dict[str, Any]:
+        return verify_codeflow(request.source, request.language)
+
+    @app.post("/api/codeflow/ai")
+    def codeflow_ai(request: CodeFlowAIRequest, http_request: Request) -> dict[str, Any]:
+        _check_codeflow_rate(http_request, "ai", AI_RATE_LIMIT_PER_MINUTE)
+        question = request.question or request.prompt
+        if not question or not question.strip():
+            raise HTTPException(status_code=422, detail="question or prompt is required")
+        return ask_codeflow_ai(
+            question=question,
+            source=request.source,
+            language=request.language,
+            action=request.action,
+            diagnostics=request.diagnostics,
+            execution_context=request.execution,
+        )
+
     frontend = Path(__file__).resolve().parents[1] / "frontend"
     if frontend.is_dir():
+        coldchain_file = frontend / "coldchain.html"
+        if coldchain_file.is_file():
+            @app.get("/coldchain", include_in_schema=False)
+            @app.get("/cold-chain", include_in_schema=False)
+            def coldchain_dashboard() -> FileResponse:
+                """Serve the standalone ColdChain clinic dashboard."""
+                return FileResponse(str(coldchain_file), media_type="text/html")
+
+        index_file = frontend / "index.html"
+
+        # CodeFlow is a single-page lesson surface.  Keep these browser paths
+        # explicit so direct navigation and refresh do not become StaticFiles
+        # 404s while leaving the existing dashboard mount unchanged.
+        if index_file.is_file():
+            def codeflow_spa() -> FileResponse:
+                return FileResponse(str(index_file), media_type="text/html")
+
+            for path in ("/visualizer", "/examples", "/learn", "/challenges"):
+                app.add_api_route(path, codeflow_spa, methods=["GET"], include_in_schema=False)
+
+        codeflow_css_file = frontend / "codeflow.css"
+        if not codeflow_css_file.is_file():
+            codeflow_css_file = frontend / "codeflow-legacy.css"
+        if codeflow_css_file.is_file():
+            @app.get("/codeflow.css", include_in_schema=False)
+            def codeflow_css() -> FileResponse:
+                return FileResponse(str(codeflow_css_file), media_type="text/css")
+
         app.mount("/", StaticFiles(directory=str(frontend), html=True), name="frontend")
     return app
 

@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08131f">
+  <meta name="description" content="Synthetic cold-chain resilience control room demo">
+  <title>ColdChain / Control Room</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#overview">Skip to dashboard</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <p class="eyebrow">RESILIENCE LAB <span class="dot"></span> SYNTHETIC DEMO</p>
+          <h1>ColdChain <span>/ Control Room</span></h1>
+        </div>
+      </div>
+      <div class="header-status">
+        <div class="clock-wrap">
+          <span class="status-dot live" aria-hidden="true"></span>
+          <div><span class="label">SIMULATION CLOCK</span><strong id="simClock">—</strong></div>
+        </div>
+        <div class="horizon-wrap"><span class="label">FORECAST HORIZON</span><strong id="horizonValue">—</strong></div>
+        <div class="synthetic-chip"><span aria-hidden="true">✦</span> HACKATHON / NONMEDICAL</div>
+      </div>
+    </header>
+
+    <nav class="section-nav" aria-label="Dashboard sections" id="sectionNav" hidden><a href="#overview" aria-current="location">Overview</a><a href="#operations">Operations</a><a href="#insights">Insights</a><a href="#readiness">Readiness</a><span id="sessionIdentity"></span><button id="logoutButton" class="btn btn-secondary">Sign out</button></nav>
+    <section id="authPanel" class="auth-panel" aria-labelledby="authHeading">
+      <p class="section-kicker">SECURE WORKSPACE</p><h2 id="authHeading">Connect to your control room</h2>
+      <p id="authStatus" role="status">Checking authentication configuration…</p>
+      <form id="loginForm" hidden><label for="username">Username</label><input id="username" name="username" autocomplete="username" required maxlength="128"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required><button class="btn btn-primary" type="submit" id="loginButton">Sign in</button></form>
+      <div class="button-row"><button id="demoEnter" class="btn btn-primary" hidden>Enter local demo</button><button id="retryAuth" class="btn btn-secondary" hidden>Retry connection</button></div>
+      <p class="muted">Session credentials stay in memory and clear when you sign out or reload.</p>
+    </section>
+    <main class="main-content" id="dashboard" hidden>
+      <div class="connection-banner" role="status"><span id="connectionStatus">Connecting…</span><div class="button-row"><button id="refreshButton" class="btn btn-secondary">Refresh state</button><button id="optionalSignIn" class="btn btn-ghost" hidden>Sign in with an account</button></div></div>
+      <section id="temperatureAlarmPanel" class="temperature-alarm-panel" aria-labelledby="temperatureAlarmHeading">
+        <div class="temperature-alarm-copy">
+          <p class="section-kicker">LIVE THERMAL SAFEGUARD</p>
+          <h2 id="temperatureAlarmHeading">Temperature alarm</h2>
+          <p id="temperatureAlarmStatus" class="panel-status" role="status">Waiting for a fresh state…</p>
+        </div>
+        <div class="temperature-alarm-metrics" aria-label="Temperature alarm summary">
+          <div class="temperature-alarm-metric"><span class="label">THRESHOLD</span><strong id="temperatureAlarmThreshold">&gt;6°C</strong><span>fresh reading required</span></div>
+          <div class="temperature-alarm-metric alarm-count"><span class="label">ALARM CLINICS</span><strong id="temperatureAlarmCount">—</strong><span id="temperatureAlarmCountLabel">Awaiting live state</span></div>
+          <div class="temperature-alarm-metric alarm-refresh"><span class="label">LAST STATE REFRESH</span><strong id="temperatureAlarmLastRefresh">—</strong><span>browser poll / manual refresh</span></div>
+        </div>
+        <div class="temperature-alarm-actions">
+          <button id="alarmSoundButton" class="btn btn-warning" type="button" aria-pressed="false" aria-describedby="alarmSoundStatus">Enable alarm sound</button>
+          <span id="alarmSoundStatus" class="alarm-sound-status" role="status">Sound is muted until enabled by a user click.</span>
+        </div>
+      </section>
+      <section class="intro-row" id="overview" aria-labelledby="pageTitle">
+        <div>
+          <p class="section-kicker">COLD-CHAIN OPERATIONS / DEMONSTRATION</p>
+          <h2 id="pageTitle">Power &amp; temperature, at a glance.</h2>
+          <p class="intro-copy">Monitor simulated feeder resilience and six-hour risk forecasts across the network.</p>
+        </div>
+        <div class="last-updated" aria-live="polite"><span class="pulse-ring"></span> LAST SYNC <strong id="lastSync">Waiting for state…</strong></div>
+      </section>
+
+      <div id="globalError" class="alert error" role="alert" hidden>
+        <span class="alert-icon" aria-hidden="true">!</span><div><strong id="errorTitle">Connection issue</strong><p id="errorMessage"></p></div><button class="icon-button" id="dismissError" aria-label="Dismiss error">×</button>
+      </div>
+      <div id="loadingState" class="loading-banner" role="status"><span class="spinner"></span> Connecting to simulation state…</div>
+
+      <section class="summary-grid" aria-label="Network summary">
+        <article class="summary-card accent-teal"><div class="card-top"><span class="card-label">CLINICS POWERED</span><span class="card-icon">⌁</span></div><div class="metric-line"><strong id="poweredClinics">—</strong><span class="metric-denom">/ <span id="totalClinics">—</span></span></div><p id="poweredSub">Awaiting live state</p><div class="progress"><span id="poweredProgress"></span></div></article>
+        <article class="summary-card accent-blue"><div class="card-top"><span class="card-label">ACTIVE FEEDERS</span><span class="card-icon">◈</span></div><div class="metric-line"><strong id="activeFeeders">—</strong><span class="metric-denom">/ <span id="totalFeeders">—</span></span></div><p id="feederSub">Network availability</p><div class="progress"><span id="feederProgress"></span></div></article>
+        <article class="summary-card accent-orange"><div class="card-top"><span class="card-label">SYSTEM HEALTH</span><span class="card-icon">◉</span></div><div class="health-line"><span id="healthDot" class="health-dot"></span><strong id="systemHealth">—</strong></div><p id="healthSub">Risk posture from live state</p><div class="health-track"><span id="healthTrack"></span></div></article>
+        <article class="summary-card accent-red"><div class="card-top"><span class="card-label">HIGH RISK CLINICS</span><span class="card-icon">△</span></div><div class="metric-line"><strong id="criticalClinics">—</strong><span class="metric-denom">critical</span></div><p id="riskSub">Warning: —</p><div class="risk-bars"><span id="criticalBar"></span><span id="warningBar"></span><span class="risk-rest"></span></div></article>
+      </section>
+
+      <section class="section-block" aria-labelledby="feederHeading">
+        <div class="section-heading"><div><p class="section-kicker">NETWORK TOPOLOGY</p><h3 id="feederHeading">Feeder status</h3></div><div class="legend" aria-label="Feeder status legend"><span><i class="legend-dot online"></i> Online</span><span><i class="legend-dot offline"></i> Offline</span></div></div>
+        <div id="feederGrid" class="feeder-grid"><div class="empty-state">Loading feeder topology…</div></div>
+      </section>
+
+      <section class="section-block" id="operations" aria-labelledby="operationsHeading">
+        <div class="section-heading"><div><p class="section-kicker">RESPOND WITH CONTEXT</p><h3 id="operationsHeading">Operations workspace</h3></div><span class="badge warning">Demo-log notifications · no real SMS</span></div>
+        <div class="operations-grid">
+           <article class="ops-card alerts-card"><h4>Current alert queue</h4><p class="muted">Only open or acknowledged alerts are shown. Acknowledgement records ownership; it does not resolve the underlying hazard.</p><p class="panel-status" id="alertsStatus" role="status">Waiting for alerts…</p><div id="alertsList" class="skeleton-block">Loading current alert queue…</div></article>
+          <article class="ops-card"><h4>Telemetry &amp; ingestion</h4><div id="telemetryContent">Awaiting source information.</div><p class="muted">Scenario controls generate simulated readings. External clinic and feeder telemetry enters through the ingestion API; ingestion is not evidence that physical sensors are connected.</p></article>
+          <article class="ops-card"><h4>Weather context</h4><p class="panel-status" id="weatherStatus" role="status">Waiting for weather…</p><div id="weatherContent" class="skeleton-block">Loading weather context…</div><p class="muted">Provider weather is operational context, not the synthetic training features shown in the clinic register.</p></article>
+        </div>
+      </section>
+      <section class="section-block simulation-section" aria-labelledby="simulationHeading">
+        <div class="section-heading"><div><p class="section-kicker">SCENARIO CONTROLS</p><h3 id="simulationHeading">Run a controlled simulation</h3></div><span class="lock-note" id="busyNote"><span aria-hidden="true">⌘</span> Actions serialize to protect state</span></div>
+        <div class="controls-card">
+          <div class="control-cluster"><label for="feederSelect">Target feeder</label><select id="feederSelect" data-action-control></select><div class="button-row"><button class="btn btn-danger" id="tripFeeder" data-action-control><span>⊗</span> Trip feeder</button><button class="btn btn-secondary" id="restoreFeeder" data-action-control><span>↻</span> Restore feeder</button></div></div>
+          <div class="control-divider"></div>
+          <div class="control-cluster"><label for="clinicSelect">Target clinic</label><select id="clinicSelect" data-action-control></select><div class="button-row"><button class="btn btn-warning" id="localFault" data-action-control><span>⚡</span> Local fault</button><button class="btn btn-secondary" id="restoreClinic" data-action-control><span>↻</span> Restore clinic</button><button class="btn btn-blue" id="freezeClinic" data-action-control><span>❄</span> Freeze clinic</button></div></div>
+          <div class="control-divider"></div>
+          <div class="control-cluster time-controls"><label>Advance simulation</label><div class="button-row"><button class="btn btn-ghost" id="advance1" data-action-control>+1 hour</button><button class="btn btn-ghost" id="advance6" data-action-control>+6 hours</button><button class="btn btn-reset" id="resetSimulation" data-action-control>Reset</button></div><small>Temperature evolves over simulated time.</small></div>
+        </div>
+      </section>
+      <section class="section-block power-cut-forecast-section" id="powerCutForecast" aria-labelledby="powerCutForecastHeading">
+        <div class="section-heading"><div><p class="section-kicker">SIMULATED ESTIMATES</p><h3 id="powerCutForecastHeading">Fridge temperature after a power cut</h3><p class="muted">Select a clinic above. This is a hypothetical six-hour cut using its current simulated temperature, ambient temperature and insulation; it does not mutate the simulation.</p></div><span id="powerCutForecastStatus" class="badge safe">SIMULATED · SAFE</span></div>
+        <div class="power-cut-forecast-grid">
+          <div class="power-cut-forecast-summary"><div><span class="label">SELECTED CLINIC</span><strong id="powerCutForecastClinic">—</strong></div><div><span class="label">CURRENT SIMULATED TEMP</span><strong id="powerCutCurrentTemp">—</strong></div><div><span class="label">AMBIENT TEMP</span><strong id="powerCutAmbientTemp">—</strong></div><div><span class="label">SAFE RANGE</span><strong id="powerCutSafeRange">2–8°C</strong></div><div><span class="label">EARLY-WARNING LIMIT</span><strong id="powerCutLimit">&gt;6°C</strong></div></div>
+          <div class="power-cut-chart-card"><div class="power-cut-chart-heading"><span>FORECAST GRAPH · NO COMPRESSOR COOLING</span><span id="powerCutChartNote">SIMULATED ESTIMATES</span></div><div class="power-cut-chart-frame"><canvas id="powerCutForecastChart" role="img" aria-label="Simulated fridge temperature forecast for one, two, and six hours after a power cut"></canvas></div><div class="power-cut-chart-legend"><span><i class="power-cut-key mean"></i> Estimated</span><span><i class="power-cut-key band"></i> Uncertainty</span><span><i class="power-cut-key limit"></i> Limits</span></div></div>
+          <div class="power-cut-horizon-grid"><div><span>AFTER 1 HOUR</span><strong id="powerCutAfter1h">—</strong></div><div><span>AFTER 2 HOURS</span><strong id="powerCutAfter2h">—</strong></div><div><span>AFTER 6 HOURS</span><strong id="powerCutAfter6h">—</strong></div><div><span>TIME TO LIMIT</span><strong id="powerCutTimeToLimit">—</strong></div></div>
+        </div>
+        <p id="powerCutForecastNote" class="power-cut-forecast-note" role="status">Waiting for a current simulated state…</p>
+      </section>
+
+      <section class="section-block clinic-section" aria-labelledby="clinicHeading">
+        <div class="section-heading table-heading"><div><p class="section-kicker">LIVE INVENTORY</p><h3 id="clinicHeading">Clinic risk register</h3></div><div class="table-tools"><label class="search-box"><span aria-hidden="true">⌕</span><input id="clinicSearch" type="search" placeholder="Search clinic or ID" aria-label="Search clinic or ID"></label><label class="sr-only" for="riskFilter">Risk filter</label><select id="riskFilter"><option value="all">All risk</option><option value="Critical">Critical</option><option value="Warning">Warning</option><option value="Safe">Safe</option></select><label class="sr-only" for="feederFilter">Feeder filter</label><select id="feederFilter"><option value="all">All feeders</option></select></div></div>
+        <div class="table-scroll"><table><caption class="sr-only">Live clinic priority ranking, SMS state, power, temperature, weather and calibrated six-hour risk</caption><thead><tr><th scope="col">Priority</th><th scope="col">Clinic</th><th scope="col">Feeder</th><th scope="col">Power</th><th scope="col">Temp</th><th scope="col">Next 6h forecast</th><th scope="col">Calibrated risk</th><th scope="col">Slack</th><th scope="col">SMS state</th></tr></thead><tbody id="clinicTableBody"><tr><td colspan="9" class="empty-cell">Loading live clinic register…</td></tr></tbody></table></div><div id="tableSummary" class="table-summary">—</div>
+      </section>
+
+      <section class="section-block model-section" id="insights" aria-labelledby="modelHeading">
+        <div class="section-heading"><div><p class="section-kicker">MODEL TRANSPARENCY</p><h3 id="modelHeading">Forecast model insights</h3></div><span class="model-status" id="modelStatus">Loading model profile…</span></div>
+        <div id="modelUnavailable" class="model-unavailable" hidden>Model profile is not ready. Live operations remain available.</div>
+        <div id="modelContent">
+          <div class="model-meta"><div><span class="label">MODEL</span><strong id="modelName">—</strong></div><div><span class="label">HORIZON</span><strong id="modelHorizon">—</strong></div><div><span class="label">DATASET</span><strong id="datasetInfo">—</strong></div><div><span class="label">POSITIVE RATE</span><strong id="positiveRate">—</strong></div></div>
+          <div class="model-grid">
+            <article class="insight-card metrics-card"><div class="insight-title"><h4>Held-out TEST metrics</h4></div><p class="muted">Synthetic test performance is not clinical validation.</p><div class="metric-tiles"><div><span>PR-AUC</span><strong id="prAuc">—</strong></div><div><span>F2 SCORE</span><strong id="f2Score">—</strong></div><div><span>BRIER</span><strong id="brierScore">—</strong></div><div><span>ROC-AUC</span><strong id="rocAuc">—</strong></div><div><span>THRESHOLD</span><strong id="threshold">—</strong></div><div><span>PREVALENCE</span><strong id="prevalence">—</strong></div></div></article>
+            <article class="insight-card chart-card"><div class="insight-title"><div><h4>Reliability curve</h4><p>Observed outcome vs predicted probability</p></div><span class="chart-legend"><i class="line-key teal"></i> Observed <i class="line-key ideal"></i> Ideal</span></div><div class="chart-frame"><canvas id="reliabilityChart" role="img" aria-label="Reliability curve chart showing observed outcome by predicted probability"></canvas></div><div class="axis-labels"><span>0%</span><span>Predicted probability</span><span>100%</span></div></article>
+            <article class="insight-card chart-card"><div class="insight-title"><div><h4>Confusion matrix</h4><p>Test set at operating threshold</p></div></div><div class="matrix-wrap"><div class="matrix-axis y-axis">ACTUAL</div><div class="matrix"><div class="matrix-corner"></div><div class="matrix-head">Pred. safe</div><div class="matrix-head">Pred. risk</div><div class="matrix-label">Safe</div><div class="matrix-cell tn" id="matrixTn">—</div><div class="matrix-cell fp" id="matrixFp">—</div><div class="matrix-label">At risk</div><div class="matrix-cell fn" id="matrixFn">—</div><div class="matrix-cell tp" id="matrixTp">—</div><div class="matrix-foot">NEGATIVE</div><div class="matrix-foot">POSITIVE</div></div></div><div class="matrix-legend"><span><i class="swatch tn"></i> Correct safe</span><span><i class="swatch tp"></i> Correct risk</span><span><i class="swatch fp"></i> False alarm</span></div></article>
+            <article class="insight-card chart-card"><div class="insight-title"><div><h4>ROC curve</h4><p>Discrimination across thresholds</p></div><span class="chart-legend"><i class="line-key orange"></i> ROC <i class="line-key ideal"></i> Chance</span></div><div class="chart-frame"><canvas id="rocChart" role="img" aria-label="ROC curve chart showing true positive rate by false positive rate"></canvas></div><div class="axis-labels"><span>0%</span><span>False positive rate</span><span>100%</span></div></article>
+            <article class="insight-card feature-card"><div class="insight-title"><div><h4>Feature importance · gain</h4><p>Sorted by model split gain. Association, not a causal explanation.</p></div></div><div id="featureImportance" class="importance-list"><div class="empty-state">Loading features…</div></div></article>
+          </div>
+          <div id="modelNotes" class="model-notes" hidden><strong>Model notes</strong><ul></ul></div>
+        </div>
+        <div id="thermalForecastValidation" class="thermal-validation" role="status"><strong>SIMULATED thermal forecast validation</strong><span id="thermalValidationText">Waiting for held-out synthetic scenario results…</span></div>
+      </section>
+
+      <section class="section-block" aria-labelledby="monitorHeading">
+        <div class="section-heading"><div><p class="section-kicker">MEASURE, THEN LEARN</p><h3 id="monitorHeading">Monitoring &amp; human feedback</h3></div></div>
+        <p id="monitoringStatus" class="panel-status" role="status">Waiting for monitoring…</p><div id="monitoringContent" class="ops-card skeleton-block">Loading monitoring…</div>
+        <form id="feedbackForm" class="ops-card feedback-form" hidden>
+          <h4>Record a confirmed outcome</h4><p class="muted">Submit only human-confirmed outcomes. These records support later evaluation; they do not establish clinical validity.</p>
+          <label for="predictionSelect">Recent prediction</label><select id="predictionSelect" required data-feedback-control></select>
+          <label for="actualOutcome">Observed outcome</label><select id="actualOutcome" required data-feedback-control><option value="">Select confirmed outcome</option><option value="true">Cold-chain breach occurred</option><option value="false">No cold-chain breach occurred</option></select>
+          <label for="feedbackNotes">Confirmation notes</label><textarea id="feedbackNotes" rows="3" maxlength="2000" data-feedback-control placeholder="Evidence and observation context"></textarea>
+          <button id="feedbackSubmit" class="btn btn-primary" data-feedback-control>Save confirmed outcome</button><p id="feedbackStatus" role="status"></p>
+        </form>
+      </section>
+      <section class="section-block" id="readiness" aria-labelledby="readinessHeading"><div class="section-heading"><div><p class="section-kicker">BOUNDARIES &amp; SAFEGUARDS</p><h3 id="readinessHeading">Readiness, with evidence</h3></div><span class="badge warning">Not clinically validated</span></div><div class="readiness-callout"><h4>Qualified signoff is required before clinical use.</h4><p>This is a nonmedical demonstration. Clinical validation, hardware commissioning and real notification delivery are separate work. Default hardware and notification integrations are not connected. No certification or production-readiness claim is made.</p></div><p id="policyStatus" class="panel-status" role="status">Waiting for safety policy…</p><div id="policyContent" class="ops-card skeleton-block">Loading deterministic safeguards…</div></section>
+      <section class="section-block" id="auditSection" hidden aria-labelledby="auditHeading"><div class="section-heading"><div><p class="section-kicker">ACCOUNTABILITY</p><h3 id="auditHeading">Audit trail</h3></div><span class="badge">Admin &amp; auditor access</span></div><p id="auditStatus" class="panel-status" role="status">Waiting for audit…</p><div id="auditContent" class="ops-card">Loading audit entries…</div></section>
+      <footer class="footer"><span><span class="footer-mark">✦</span> ColdChain Resilience Lab</span><span>SIMULATED ONLY: the fridge physics model provides a tested countdown after a simulated outage; outage forecasting is weak and no real-sensor or clinical accuracy is claimed.</span></footer>
+    </main>
+  </div>
+  <div id="toastRegion" class="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
