@@ -159,6 +159,7 @@ def create_app() -> FastAPI:
     codeflow_rate_lock = RLock()
     login_attempts: OrderedDict[str, deque[float]] = OrderedDict()
     codeflow_attempts: OrderedDict[str, deque[float]] = OrderedDict()
+    api_attempts: OrderedDict[str, deque[float]] = OrderedDict()
     dummy_hash = hash_password("unusable-login-timing-placeholder")
 
     @asynccontextmanager
@@ -183,11 +184,46 @@ def create_app() -> FastAPI:
             stopping.set()
             await task
 
-    app = FastAPI(title="Cold-chain operational prototype", version="2.0.0", lifespan=lifespan)
+    # Interactive API documentation is disabled in deployed builds so it cannot
+    # expose an unauthenticated inventory of operational endpoints.
+    app = FastAPI(title="Cold-chain operational prototype", version="2.0.0", lifespan=lifespan,
+                  docs_url=None, redoc_url=None, openapi_url=None)
     app.state.simulation = None
     app.state.bundle = None
     app.state.storage = None
     app.state.initial_state_recorded = False
+
+    @app.middleware("http")
+    async def security_boundary(request: Request, call_next):
+        # Render terminates TLS at its proxy; honor its normalized header only
+        # when HTTPS enforcement is explicitly enabled for deployment.
+        forwarded_proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+        if config.ENFORCE_HTTPS and forwarded_proto != "https":
+            from fastapi.responses import RedirectResponse
+            response = RedirectResponse(str(request.url).replace("http://", "https://", 1), status_code=308)
+        else:
+            if request.url.path.startswith("/api/"):
+                key = request.client.host if request.client else "unknown"
+                now = time.monotonic()
+                with login_lock:
+                    bucket = api_attempts.setdefault(key, deque(maxlen=config.API_RATE_LIMIT_PER_MINUTE))
+                    api_attempts.move_to_end(key)
+                    while bucket and bucket[0] <= now - 60:
+                        bucket.popleft()
+                    if len(bucket) >= config.API_RATE_LIMIT_PER_MINUTE:
+                        return JSONResponse(status_code=429, content={"detail": "Too many requests; retry in one minute"}, headers={"Retry-After": "60"})
+                    bucket.append(now)
+                    while len(api_attempts) > 2048:
+                        api_attempts.popitem(last=False)
+            response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api/") else response.headers.get("Cache-Control", "no-cache")
+        if forwarded_proto == "https" or config.ENFORCE_HTTPS:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -506,29 +542,29 @@ def create_app() -> FastAPI:
                 codeflow_attempts.popitem(last=False)
 
     @app.get("/api/codeflow/config")
-    def codeflow_runtime_config() -> dict[str, Any]:
+    def codeflow_runtime_config(_: Principal = Depends(current_principal)) -> dict[str, Any]:
         return codeflow_config()
 
     @app.get("/api/codeflow/capabilities", include_in_schema=False)
-    def codeflow_capabilities() -> dict[str, Any]:
+    def codeflow_capabilities(_: Principal = Depends(current_principal)) -> dict[str, Any]:
         return codeflow_config()
 
     @app.post("/api/codeflow/execute")
-    def codeflow_execute(request: CodeFlowRequest, http_request: Request) -> dict[str, Any]:
+    def codeflow_execute(request: CodeFlowRequest, http_request: Request, _: Principal = Depends(current_principal)) -> dict[str, Any]:
         _check_codeflow_rate(http_request, "execute", EXECUTE_RATE_LIMIT_PER_MINUTE)
         return execute_codeflow(request.source, request.language, _codeflow_limits(request))
 
     @app.post("/api/codeflow/run", include_in_schema=False)
-    def codeflow_run(request: CodeFlowRequest, http_request: Request) -> dict[str, Any]:
+    def codeflow_run(request: CodeFlowRequest, http_request: Request, _: Principal = Depends(current_principal)) -> dict[str, Any]:
         _check_codeflow_rate(http_request, "execute", EXECUTE_RATE_LIMIT_PER_MINUTE)
         return execute_codeflow(request.source, request.language, _codeflow_limits(request))
 
     @app.post("/api/codeflow/verify")
-    def codeflow_verify(request: CodeFlowRequest) -> dict[str, Any]:
+    def codeflow_verify(request: CodeFlowRequest, _: Principal = Depends(current_principal)) -> dict[str, Any]:
         return verify_codeflow(request.source, request.language)
 
     @app.post("/api/codeflow/ai")
-    def codeflow_ai(request: CodeFlowAIRequest, http_request: Request) -> dict[str, Any]:
+    def codeflow_ai(request: CodeFlowAIRequest, http_request: Request, _: Principal = Depends(current_principal)) -> dict[str, Any]:
         _check_codeflow_rate(http_request, "ai", AI_RATE_LIMIT_PER_MINUTE)
         question = request.question or request.prompt
         if not question or not question.strip():

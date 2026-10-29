@@ -16,6 +16,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from . import config
 
+try:
+    import bcrypt
+except ImportError:  # local minimal environments can still verify legacy records
+    bcrypt = None
+
 ROLES = {"clinic_operator", "grid_operator", "admin", "auditor"}
 _bearer = HTTPBearer(auto_error=False)
 
@@ -31,6 +36,8 @@ class Principal:
 
 
 def hash_password(password: str, iterations: int = 310_000) -> str:
+    if bcrypt is not None:
+        return "bcrypt$" + bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode("ascii")
     salt = secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
     return f"pbkdf2_sha256${iterations}${_b64(salt)}${_b64(digest)}"
@@ -38,6 +45,8 @@ def hash_password(password: str, iterations: int = 310_000) -> str:
 
 def verify_password(password: str, encoded: str) -> bool:
     try:
+        if encoded.startswith("bcrypt$"):
+            return bcrypt is not None and bcrypt.checkpw(password.encode(), encoded[7:].encode("ascii"))
         algorithm, iteration_text, salt_text, digest_text = encoded.split("$", 3)
         if algorithm != "pbkdf2_sha256":
             return False

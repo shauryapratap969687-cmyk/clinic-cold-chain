@@ -21,6 +21,8 @@ def env(name: str, default: str) -> str:
 
 
 AUTH_MODE = env("COLDCHAIN_AUTH_MODE", "demo").lower()
+ENFORCE_HTTPS = env("COLDCHAIN_ENFORCE_HTTPS", "false").lower() in {"1", "true", "yes", "on"}
+API_RATE_LIMIT_PER_MINUTE = int(env("COLDCHAIN_API_RATE_LIMIT_PER_MINUTE", "300"))
 _EPHEMERAL_SECRET = secrets.token_urlsafe(48)
 SECRET_KEY = env("COLDCHAIN_SECRET_KEY", _EPHEMERAL_SECRET if AUTH_MODE == "demo" else "")
 DB_PATH = Path(env("COLDCHAIN_DB_PATH", str(BASE_DIR / "data" / "coldchain.db")))
@@ -57,7 +59,7 @@ def validate() -> None:
             raise ValueError("Required mode needs an explicit COLDCHAIN_DEMO_PASSWORD of at least 12 characters")
         if SECRET_KEY == _EPHEMERAL_SECRET or len(SECRET_KEY) < 32 or len(set(SECRET_KEY)) < 12:
             raise ValueError("Required mode needs a strong explicit COLDCHAIN_SECRET_KEY (32+ characters)")
-    if TOKEN_TTL_SECONDS <= 0 or TELEMETRY_STALE_SECONDS <= 0 or ALERT_ESCALATION_SECONDS <= 0:
+    if TOKEN_TTL_SECONDS <= 0 or TELEMETRY_STALE_SECONDS <= 0 or ALERT_ESCALATION_SECONDS <= 0 or API_RATE_LIMIT_PER_MINUTE <= 0:
         raise ValueError("Token, telemetry, and escalation durations must be positive")
     if not 1 <= WORKER_INTERVAL_SECONDS <= 60 or not 0 < WEATHER_TIMEOUT_SECONDS <= 10:
         raise ValueError("Worker interval must be 1..60 seconds and weather timeout 0..10 seconds")
