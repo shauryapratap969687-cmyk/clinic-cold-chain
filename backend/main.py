@@ -582,6 +582,11 @@ def create_app() -> FastAPI:
     if frontend.is_dir():
         coldchain_file = frontend / "coldchain.html"
         if coldchain_file.is_file():
+            @app.get("/", include_in_schema=False)
+            def clinic_cold_chain_home() -> FileResponse:
+                """Make Clinic Cold Chain the default deployed application."""
+                return FileResponse(str(coldchain_file), media_type="text/html")
+
             @app.get("/coldchain", include_in_schema=False)
             @app.get("/cold-chain", include_in_schema=False)
             def coldchain_dashboard() -> FileResponse:

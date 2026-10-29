@@ -13,7 +13,7 @@ def test_priority_endpoint_and_simulated_sms_states(monkeypatch, tmp_path) -> No
     with TestClient(main.create_app()) as client:
         dashboard = client.get("/coldchain")
         assert dashboard.status_code == 200
-        assert "ColdChain / Control Room" in dashboard.text
+        assert "Clinic Cold Chain / Control Room" in dashboard.text
         assert "Live clinic priority ranking" in dashboard.text
 
         initial = client.get("/api/priority")
