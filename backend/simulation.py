@@ -14,6 +14,7 @@ import pandas as pd
 from .features import build_feature_row
 from .model import calibrated_probability
 from . import config
+from .thermal import THERMAL_HORIZON_HOURS, THERMAL_MODEL_VERSION, forecast_temperature, thermal_step, unavailable_forecast
 
 
 class Simulation:
@@ -36,6 +37,7 @@ class Simulation:
             self.clinics: dict[str, dict[str, Any]] = {}
             for index in range(20):
                 clinic_id = f"CL-{index + 1:02d}"
+                insulation_tau_hours = float(self.rng.uniform(20.0, 28.0))
                 self.clinics[clinic_id] = {
                     "id": clinic_id,
                     "name": f"Clinic {index + 1}",
@@ -51,6 +53,15 @@ class Simulation:
                     "sensor_power_on": True,
                     "source": "simulation",
                     "observed_at": datetime.now(timezone.utc).isoformat(),
+                    "ambient_temp_c": 22.0,
+                    "door_open": False,
+                    "door_open_minutes": 0.0,
+                    "door_open_remaining_hours": 0,
+                    "cooling_failure": False,
+                    "compressor_on": True,
+                    "compressor_duty": 0.4,
+                    "insulation_tau_hours": insulation_tau_hours,
+                    "thermal_model": THERMAL_MODEL_VERSION,
                 }
             return self.state()
 
@@ -75,14 +86,32 @@ class Simulation:
                 clinic["outage_hours"] = 0.0
             clinic["power_on"] = bool(feeder_online and not clinic["local_fault"])
             current = float(clinic["temperature_c"])
-            if clinic["freeze_active"]:
-                target, rate = -1.0, 0.5
-            elif not clinic["power_on"]:
-                target, rate = 9.0, 0.25
+            if clinic.get("door_open_remaining_hours", 0) > 0:
+                clinic["door_open_remaining_hours"] -= 1
+                door_minutes = float(self.rng.uniform(8.0, 30.0))
+            elif self.rng.random() < 0.08:
+                duration = int(self.rng.integers(1, 3))
+                clinic["door_open_remaining_hours"] = duration - 1
+                door_minutes = float(self.rng.uniform(8.0, 30.0))
             else:
-                target, rate = 4.5 + 0.05 * (outdoor - 22), 0.16
-            noise = float(self.rng.normal(0, 0.04))
-            clinic["temperature_c"] = round(current + rate * (target - current) + noise, 3)
+                door_minutes = 0.0
+            clinic["door_open_minutes"] = round(door_minutes, 2)
+            clinic["door_open"] = bool(door_minutes > 0)
+            clinic["cooling_failure"] = bool(clinic["local_fault"])
+            step = thermal_step(
+                current,
+                outdoor,
+                power_on=clinic["power_on"],
+                cooling_failure=clinic["cooling_failure"],
+                freeze_active=clinic["freeze_active"],
+                door_open_minutes=door_minutes,
+                insulation_tau_hours=clinic["insulation_tau_hours"],
+                noise_c=float(self.rng.normal(0, 0.08)),
+            )
+            clinic["temperature_c"] = round(float(step["temperature_c"]), 3)
+            clinic["ambient_temp_c"] = round(float(outdoor), 3)
+            clinic["compressor_on"] = bool(step["compressor_on"])
+            clinic["compressor_duty"] = float(step["compressor_duty"])
             clinic["humidity_pct"] = humidity
 
     def snapshot(self) -> dict[str, Any]:
@@ -101,6 +130,17 @@ class Simulation:
             self.rng = np.random.default_rng(self.seed)
             self.rng.bit_generator.state = payload["rng_state"]
             self.clinics = copy.deepcopy(payload["clinics"])
+            for index, clinic in enumerate(self.clinics.values()):
+                clinic.setdefault("clinic_index", index)
+                clinic.setdefault("ambient_temp_c", 22.0)
+                clinic.setdefault("door_open", False)
+                clinic.setdefault("door_open_minutes", 0.0)
+                clinic.setdefault("door_open_remaining_hours", 0)
+                clinic.setdefault("cooling_failure", bool(clinic.get("local_fault", False)))
+                clinic.setdefault("compressor_on", bool(clinic.get("power_on", True)))
+                clinic.setdefault("compressor_duty", 0.4)
+                clinic.setdefault("insulation_tau_hours", 24.0)
+                clinic.setdefault("thermal_model", THERMAL_MODEL_VERSION)
             self.feeder_online = {int(k): bool(v) for k, v in payload["feeder_online"].items()}
             self.feeder_observations = {int(k): v for k, v in payload.get("feeder_observations", {}).items()}
             self.external_mode = bool(payload.get("external_mode", False))
@@ -111,7 +151,9 @@ class Simulation:
             self.feeder_online = {number: True for number in range(1, 7)}
             for clinic in self.clinics.values():
                 clinic.update(observed_at=None, source=None, local_fault=False, freeze_active=False,
-                              power_on=False, sensor_power_on=False, outage_hours=0)
+                              power_on=False, sensor_power_on=False, outage_hours=0,
+                              door_open=False, door_open_minutes=0.0, cooling_failure=False,
+                              compressor_on=False, compressor_duty=0.0)
 
     def ingest_clinic(self, payload: dict[str, Any], observed_at: str) -> None:
         with self._lock:
@@ -121,6 +163,9 @@ class Simulation:
             clinic.update({key: payload[key] for key in ("temperature_c", "humidity_pct", "local_fault", "outage_hours", "source")})
             clinic["sensor_power_on"] = payload["power_on"]
             clinic["power_on"] = bool(payload["power_on"] and not payload["local_fault"] and self.feeder_online[clinic["feeder_id"]])
+            clinic["cooling_failure"] = bool(payload["local_fault"])
+            clinic["door_open"] = False
+            clinic["door_open_minutes"] = 0.0
             clinic["observed_at"] = observed_at
 
     def ingest_feeder(self, payload: dict[str, Any], observed_at: str) -> None:
@@ -140,6 +185,99 @@ class Simulation:
         stamp = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
         return "stale" if (datetime.now(timezone.utc) - stamp).total_seconds() > config.TELEMETRY_STALE_SECONDS else "ok"
 
+    def _thermal_forecast(self, clinic: dict[str, Any], quality: str, ambient_temp_c: float) -> dict[str, Any]:
+        horizon = config.THERMAL_FORECAST_HORIZON_HOURS
+        if quality != "ok" or not math.isfinite(float(clinic.get("temperature_c", float("nan")))):
+            return unavailable_forecast(f"Temperature telemetry is {quality}; no simulated countdown is shown.", horizon)
+        future_ambient = [
+            self._weather(self.timestamp + timedelta(hours=offset))[0]
+            for offset in range(1, horizon + 1)
+        ]
+        forecast_seed = self.seed + int(clinic["clinic_index"]) * 1009 + int(self.timestamp.timestamp() // 3600)
+        forecast = forecast_temperature(
+            float(clinic["temperature_c"]),
+            future_ambient,
+            power_on=bool(clinic.get("power_on", True)),
+            cooling_failure=bool(clinic.get("cooling_failure", False)),
+            freeze_active=bool(clinic.get("freeze_active", False)),
+            door_open_minutes=float(clinic.get("door_open_minutes", 0.0)),
+            insulation_tau_hours=float(clinic.get("insulation_tau_hours", 24.0)),
+            warning_limit_c=config.HIGH_TEMP_ALARM_C,
+            seed=forecast_seed,
+        )
+        if self.external_mode:
+            forecast["reliability"] = "unreliable"
+            forecast["time_to_limit_hours"] = None
+            forecast["time_to_warning_hours"] = None
+            forecast["time_to_critical_hours"] = None
+            forecast["limit_breach_direction"] = None
+            forecast["note"] = "SIMULATED forecast is limited in external telemetry mode; no operational countdown is shown."
+        forecast["measured_temperature_c"] = round(float(clinic["temperature_c"]), 2)
+        forecast["ambient_temperature_c"] = round(float(ambient_temp_c), 2)
+        forecast["data_source"] = "simulation"
+        return forecast
+
+    @staticmethod
+    def _power_cut_status(forecast: dict[str, Any]) -> str:
+        if forecast.get("reliability") != "reliable":
+            return "Unknown"
+        measured = forecast.get("current_temperature_c")
+        if isinstance(measured, (int, float)) and (measured < 2 or measured > 8):
+            return "Critical"
+        if forecast.get("time_to_critical_hours") is not None:
+            return "Critical"
+        if forecast.get("time_to_warning_hours") is not None:
+            return "Warning"
+        return "Safe"
+
+    def _power_cut_forecast(self, clinic: dict[str, Any], quality: str, ambient_temp_c: float) -> dict[str, Any]:
+        """Estimate a hypothetical six-hour cut without mutating simulation state."""
+        horizon = THERMAL_HORIZON_HOURS
+        safe_range = {"low_c": 2.0, "high_c": 8.0}
+        if quality != "ok" or not math.isfinite(float(clinic.get("temperature_c", float("nan")))):
+            result = unavailable_forecast(f"Temperature telemetry is {quality}; no power-cut countdown is shown.", horizon)
+            result.update({"scenario": "power_cut", "safe_range_c": safe_range, "power_cut_status": "Unknown"})
+            return result
+        future_ambient = [
+            self._weather(self.timestamp + timedelta(hours=offset))[0]
+            for offset in range(1, horizon + 1)
+        ]
+        forecast_seed = self.seed + int(clinic["clinic_index"]) * 1009 + int(self.timestamp.timestamp() // 3600) + 500_000
+        forecast = forecast_temperature(
+            float(clinic["temperature_c"]),
+            future_ambient,
+            power_on=False,
+            cooling_failure=True,
+            door_open_minutes=float(clinic.get("door_open_minutes", 0.0)),
+            insulation_tau_hours=float(clinic.get("insulation_tau_hours", 24.0)),
+            warning_limit_c=config.HIGH_TEMP_ALARM_C,
+            seed=forecast_seed,
+        )
+        forecast.update({
+            "scenario": "power_cut",
+            "safe_range_c": safe_range,
+            "configured_limit_c": float(config.HIGH_TEMP_ALARM_C),
+            "current_temperature_c": round(float(clinic["temperature_c"]), 2),
+            "ambient_temperature_c": round(float(ambient_temp_c), 2),
+            "power_cut_status": self._power_cut_status({
+                **forecast, "current_temperature_c": round(float(clinic["temperature_c"]), 2)
+            }),
+            "note": "SIMULATED power-cut estimate assumes the compressor is unavailable and heat enters through ambient exchange, insulation, and possible door openings.",
+        })
+        trajectory = forecast.get("trajectory", [])
+        forecast["after_1h_c"] = trajectory[0]["temperature_c"] if len(trajectory) >= 1 else None
+        forecast["after_2h_c"] = trajectory[1]["temperature_c"] if len(trajectory) >= 2 else None
+        forecast["after_6h_c"] = trajectory[5]["temperature_c"] if len(trajectory) >= 6 else None
+        if self.external_mode:
+            forecast["reliability"] = "unreliable"
+            forecast["time_to_limit_hours"] = None
+            forecast["time_to_warning_hours"] = None
+            forecast["time_to_critical_hours"] = None
+            forecast["limit_breach_direction"] = None
+            forecast["power_cut_status"] = "Unknown"
+            forecast["note"] = "SIMULATED power-cut estimate is limited in external telemetry mode; no operational countdown is shown."
+        return forecast
+
     def _clinic_view(self, clinic: dict[str, Any]) -> dict[str, Any]:
         outdoor, rain, wind, _ = self._weather(self.timestamp)
         forecast_rain = max(0.0, rain * 1.7)
@@ -150,13 +288,15 @@ class Simulation:
             "forecast_wind_next_6h": wind,
             "feeder_online": self.feeder_online[clinic["feeder_id"]],
         }
+        quality = self._quality(clinic.get("observed_at"))
+        thermal_forecast = self._thermal_forecast(clinic, quality, outdoor)
+        power_cut_forecast = self._power_cut_forecast(clinic, quality, outdoor)
         too_cold = float(clinic["temperature_c"]) < 2.0
         too_hot = float(clinic["temperature_c"]) > 8.0
         thermal_violation = too_cold or too_hot
         feeder_observation = self.feeder_observations.get(clinic["feeder_id"], {})
         outage_hours = max(float(clinic["outage_hours"]),
                            float(feeder_observation.get("outage_hours", 0)) if not observation["feeder_online"] else 0)
-        quality = self._quality(clinic.get("observed_at"))
         high_temperature_warning = (quality == "ok"
                                      and float(clinic["temperature_c"]) > config.HIGH_TEMP_ALARM_C
                                      and not thermal_violation)
@@ -193,7 +333,7 @@ class Simulation:
             level = "Unknown"
         elif thermal_violation or (not model_available and outage_hours >= 2) or (probability is not None and probability >= max(0.5, threshold)):
             level = "Critical"
-        elif high_temperature_warning or not clinic["power_on"] or outage_hours > 0 or (probability is not None and probability >= threshold):
+        elif high_temperature_warning or clinic.get("cooling_failure") or not clinic["power_on"] or outage_hours > 0 or (probability is not None and probability >= threshold):
             level = "Warning"
         else:
             level = "Safe"
@@ -209,6 +349,8 @@ class Simulation:
             status = "Freeze event"
         elif high_temperature_warning:
             status = "High-temperature warning"
+        elif clinic.get("cooling_failure"):
+            status = "Cooling failure"
         elif level == "Warning":
             status = "Elevated risk"
         else:
@@ -223,6 +365,16 @@ class Simulation:
             "temperature_alarm_level": temperature_alarm_level,
             "temperature_alarm_threshold_c": float(config.HIGH_TEMP_ALARM_C),
             "temperature_alarm_message": temperature_alarm_message,
+            "ambient_temp_c": round(float(outdoor), 2) if quality != "missing" else None,
+            "door_open": bool(clinic.get("door_open", False)) if quality == "ok" else False,
+            "door_open_minutes": round(float(clinic.get("door_open_minutes", 0.0)), 2) if quality == "ok" else None,
+            "cooling_failure": bool(clinic.get("cooling_failure", False)) if quality == "ok" else False,
+            "compressor_on": bool(clinic.get("compressor_on", False)) if quality == "ok" else None,
+            "compressor_duty": round(float(clinic.get("compressor_duty", 0.0)), 3) if quality == "ok" else None,
+            "insulation_tau_hours": round(float(clinic.get("insulation_tau_hours", 24.0)), 2) if quality == "ok" else None,
+            "thermal_model": THERMAL_MODEL_VERSION,
+            "thermal_forecast": thermal_forecast,
+            "power_cut_forecast": power_cut_forecast,
             "humidity_pct": clinic["humidity_pct"] if quality != "missing" else None,
             "feeder_online": observation["feeder_online"] if not self.external_mode or clinic["feeder_id"] in self.feeder_observations else None,
             "feeder_data_quality": self._quality(feeder_observation.get("observed_at")) if self.external_mode else "ok",
@@ -244,7 +396,7 @@ class Simulation:
                         "clinic_count": sum(c["feeder_id"] == feeder_id for c in self.clinics.values())}
                        for feeder_id in range(1, 7)]
             critical = sum(c["risk_level"] == "Critical" or c.get("temperature_alarm_level") == "critical" for c in clinics)
-            warning = sum(c["risk_level"] == "Warning" or c.get("temperature_alarm_level") == "warning" or not c["power_on"] for c in clinics)
+            warning = sum(c["risk_level"] == "Warning" or c.get("temperature_alarm_level") == "warning" or c.get("cooling_failure") or not c["power_on"] for c in clinics)
             # Never count a stale last-known power reading as currently powered.
             powered = sum(c["power_on"] and c["data_quality"] == "ok" for c in clinics)
             active_feeders = sum(feeder["online"] is True and feeder["data_quality"] == "ok" for feeder in feeders)
@@ -259,7 +411,7 @@ class Simulation:
                 stamps.extend(f["observed_at"] for f in feeders if f.get("observed_at"))
                 timestamp = max(stamps) if stamps else timestamp
             return {
-                "timestamp": timestamp, "horizon_hours": 6,
+                "timestamp": timestamp, "horizon_hours": config.THERMAL_FORECAST_HORIZON_HOURS,
                 "model_ready": self.model_available,
                 "telemetry_mode": "external" if self.external_mode else "simulation",
                 "telemetry_status": "Telemetry stale" if stale_count or feeder_stale_count else "Telemetry current",
@@ -268,7 +420,10 @@ class Simulation:
                 "summary": {"total_clinics": 20, "powered_clinics": powered, "total_feeders": 6,
                              "active_feeders": active_feeders, "critical_clinics": critical,
                              "warning_clinics": warning, "system_health": health},
-                "feeders": feeders, "clinics": clinics,
+                 "thermal_forecast": {"status": "SIMULATED", "thermal_model": THERMAL_MODEL_VERSION,
+                                      "horizon_hours": config.THERMAL_FORECAST_HORIZON_HOURS,
+                                      "note": "Physics-based temperature forecasts use synthetic scenario inputs."},
+                 "feeders": feeders, "clinics": clinics,
             }
 
     def simulate(self, action: str, feeder_id: int | None = None, clinic_id: str | None = None,
@@ -296,10 +451,14 @@ class Simulation:
                 clinic = self.clinics[clinic_id]
                 clinic["local_fault"] = True
                 clinic["power_on"] = False
+                clinic["cooling_failure"] = True
             elif action == "restore_clinic":
                 clinic = self.clinics[clinic_id]
                 clinic["local_fault"] = False
                 clinic["freeze_active"] = False
+                clinic["cooling_failure"] = False
+                clinic["door_open"] = False
+                clinic["door_open_minutes"] = 0.0
                 clinic["power_on"] = self.feeder_online[clinic["feeder_id"]]
                 if clinic["power_on"]:
                     clinic["outage_hours"] = 0.0

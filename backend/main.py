@@ -25,6 +25,7 @@ from .auth import ROLES, Principal, current_principal, hash_password, issue_toke
 from .model import load_bundle
 from .simulation import Simulation
 from .storage import Storage, utc_now
+from .thermal import thermal_forecast_validation
 from .weather import get_weather
 
 
@@ -287,12 +288,14 @@ def create_app() -> FastAPI:
     def model_info(_: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
         bundle = ensure_runtime().bundle
         if bundle is None or not ensure_runtime().model_available:
-            return {"ready": False, "model_name": "Rules-only fallback", "horizon_hours": 6, "validation_status": "not_validated"}
+            return {"ready": False, "model_name": "Rules-only fallback", "horizon_hours": 6, "validation_status": "not_validated",
+                    "thermal_forecast_validation": thermal_forecast_validation(seed=config.SIMULATION_SEED + 100_000)}
         metrics = bundle.get("metrics", {})
         return {"ready": True, "model_name": "XGBoost + sigmoid calibration", "horizon_hours": 6,
                 "metrics": {name: metrics.get(name) for name in ("pr_auc", "f2", "brier", "roc_auc", "threshold", "prevalence")},
                 "dataset": metrics.get("dataset", {}), "calibration": metrics.get("calibration", []),
                 "feature_importance": metrics.get("feature_importance", []),
+                "thermal_forecast_validation": metrics.get("thermal_forecast_validation") or thermal_forecast_validation(seed=config.SIMULATION_SEED + 100_000),
                 "confusion_matrix": metrics.get("confusion_matrix", [[0, 0], [0, 0]]),
                 "roc_curve": metrics.get("roc_curve", []), "notes": metrics.get("notes", [])}
 
@@ -377,13 +380,15 @@ def create_app() -> FastAPI:
         return {"medical_status": "Operational prototype; not clinically validated or certified; not medical advice",
                 "deterministic_safeguards": [f"Observed temperature above {config.HIGH_TEMP_ALARM_C:g}°C creates an early-warning alarm",
                                                "Observed temperature below 2C or above 8C always elevates to Critical",
-                                               "Feeder outage duration contributes deterministic risk when the model is unavailable"],
+                                               "Feeder outage duration contributes deterministic risk when the model is unavailable",
+                                               "SIMULATED Newton-law thermal forecasts show a countdown only when the mean trajectory crosses a configured limit"],
                 "missing_data": "Missing or stale clinic telemetry is Unknown and creates no fresh prediction. External telemetry switches the whole runtime into external mode; simulation changes require an explicit reset. External observations use rules only; historical simulation weather is not a live model input.",
                 "retention": "SQLite retains operational telemetry, alerts, events, audit entries, predictions, and feedback until an operator-managed database retention policy removes them",
                 "roles": {"clinic_operator": "clinic telemetry, clinic controls, feedback, read operations",
                           "grid_operator": "feeder telemetry and feeder controls, read operations",
                           "admin": "all operations and audit access", "auditor": "read-only state, monitoring, alerts, audit, and events"},
                 "auth_mode": config.AUTH_MODE, "validation_status": "not_validated",
+                "thermal_forecast": "SIMULATED only; held-out synthetic validation reports temperature error and threshold-crossing error. No real-sensor or vaccine-stability claim is made.",
                 "authentication": "Demo is a no-security local bypass. Required mode uses bearer authentication; local login throttling is process-local.",
                 "escalation": f"In-app worker every {config.WORKER_INTERVAL_SECONDS:g}s; UTC elapsed-time stages at {config.ALERT_ESCALATION_SECONDS}s and {2 * config.ALERT_ESCALATION_SECONDS}s. Acknowledgement does not resolve. Demo-log outbox records intent only, with no external messages sent.",
                 "deployment": "Single application process per SQLite runtime; TLS, backups, user provisioning, and retention are operator responsibilities."}

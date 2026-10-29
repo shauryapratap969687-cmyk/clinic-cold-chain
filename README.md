@@ -109,6 +109,18 @@ COLDCHAIN_HIGH_TEMP_ALARM_C=6.0
 After changing the value, restart the application. The critical bounds remain
 the explicit demo policy limits of below `2°C` or above `8°C`.
 
+## SIMULATED physics-based thermal forecast
+
+The prototype includes a separate thermal forecast alongside the existing XGBoost risk prediction. `backend/thermal.py` uses Newton's law of cooling for ambient heat exchange and a bounded refrigerator compressor term for powered operation. Synthetic trajectories include insulation variation, door openings, feeder/power outages, local cooling failures, freeze events and reproducible residual noise.
+
+- The next six hours are simulated from current temperature, ambient trajectory, power state, cooling-failure state, door load and insulation.
+- The dashboard shows the simulated measured temperature, six-hour forecast, uncertainty band, exact 1/2/6-hour power-cut horizons, and a time-to-limit value only when the mean trajectory crosses a configured limit.
+- Missing/stale or external-mode inputs are marked unreliable and do not show a countdown. Displayed forecast values are labelled `SIMULATED`.
+- The XGBoost target and feature list remain separate from this physics forecast.
+- `/api/model` reports held-out synthetic validation metrics: MAE, RMSE, threshold-crossing-time error and failure-scenario error. These are not real refrigerator or vaccine-accuracy claims.
+
+The live simulation seed and forecast horizon can be configured with `COLDCHAIN_SIMULATION_SEED` and `COLDCHAIN_THERMAL_FORECAST_HORIZON_HOURS`.
+
 ## API
 
 The API is served by the same FastAPI process as the frontend. In `demo` mode,
@@ -281,6 +293,18 @@ See [operations guide](docs/OPERATIONS.md).
 The synthetic model is deliberately **not applied to external telemetry**.
 External observations use deterministic rules until real-data validation exists.
 Weather is context-only and is not silently inserted into the historical model.
+
+## Simulated outage-forecast review
+
+`backend/outage_analysis.py` adds a separate calibrated XGBoost outage-start review without changing the existing synthetic spoilage target. It uses separate tuning and evaluation worlds, a six-hour horizon, tuning-only threshold selection, and keeps new outages separate from already-ongoing outage persistence. All results are **SIMULATED** diagnostics.
+
+Run the review with:
+
+```powershell
+.venv\Scripts\python.exe -m backend.outage_analysis --days 180 --tuning-seed 2025 --evaluation-seed 2026 --bootstrap-samples 500 --output reports\outage_review_final.json
+```
+
+These results are not real-world outage, refrigerator, vaccine or clinical performance claims.
 
 ## Checks
 

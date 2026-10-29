@@ -7,7 +7,7 @@
     loading: $('loadingState'), error: $('globalError'), errorTitle: $('errorTitle'), errorMessage: $('errorMessage'),
     simClock: $('simClock'), horizon: $('horizonValue'), lastSync: $('lastSync'), feederGrid: $('feederGrid'),
     feederSelect: $('feederSelect'), clinicSelect: $('clinicSelect'), feederFilter: $('feederFilter'), riskFilter: $('riskFilter'), search: $('clinicSearch'),
-    tableBody: $('clinicTableBody'), tableSummary: $('tableSummary'), modelStatus: $('modelStatus'), modelUnavailable: $('modelUnavailable'), modelContent: $('modelContent'), temperatureAlarmPanel: $('temperatureAlarmPanel'), temperatureAlarmStatus: $('temperatureAlarmStatus'), temperatureAlarmThreshold: $('temperatureAlarmThreshold'), temperatureAlarmCount: $('temperatureAlarmCount'), temperatureAlarmCountLabel: $('temperatureAlarmCountLabel'), temperatureAlarmLastRefresh: $('temperatureAlarmLastRefresh'), alarmSoundButton: $('alarmSoundButton'), alarmSoundStatus: $('alarmSoundStatus')
+    tableBody: $('clinicTableBody'), tableSummary: $('tableSummary'), modelStatus: $('modelStatus'), modelUnavailable: $('modelUnavailable'), modelContent: $('modelContent'), thermalForecastValidation: $('thermalForecastValidation'), thermalValidationText: $('thermalValidationText'), powerCutForecastPanel: $('powerCutForecast'), powerCutForecastStatus: $('powerCutForecastStatus'), powerCutForecastClinic: $('powerCutForecastClinic'), powerCutCurrentTemp: $('powerCutCurrentTemp'), powerCutAmbientTemp: $('powerCutAmbientTemp'), powerCutSafeRange: $('powerCutSafeRange'), powerCutLimit: $('powerCutLimit'), powerCutAfter1h: $('powerCutAfter1h'), powerCutAfter2h: $('powerCutAfter2h'), powerCutAfter6h: $('powerCutAfter6h'), powerCutTimeToLimit: $('powerCutTimeToLimit'), powerCutForecastNote: $('powerCutForecastNote'), powerCutChart: $('powerCutForecastChart'), powerCutChartNote: $('powerCutChartNote'), temperatureAlarmPanel: $('temperatureAlarmPanel'), temperatureAlarmStatus: $('temperatureAlarmStatus'), temperatureAlarmThreshold: $('temperatureAlarmThreshold'), temperatureAlarmCount: $('temperatureAlarmCount'), temperatureAlarmCountLabel: $('temperatureAlarmCountLabel'), temperatureAlarmLastRefresh: $('temperatureAlarmLastRefresh'), alarmSoundButton: $('alarmSoundButton'), alarmSoundStatus: $('alarmSoundStatus')
   };
 
   function escapeHtml(value) {
@@ -396,6 +396,81 @@
     if (feeders.some((item) => String(item.id) === previousFilter)) els.feederFilter.value = previousFilter;
   }
 
+  function thermalForecastMarkup(clinic) {
+    const forecast = clinic && clinic.thermal_forecast;
+    if (!forecast || forecast.status !== 'SIMULATED') return '';
+    if (forecast.reliability !== 'reliable' || !finite(forecast.forecast_temperature_c)) {
+      return '<span class="thermal-forecast thermal-forecast-unreliable">SIMULATED forecast unavailable · no countdown</span>';
+    }
+    const uncertainty = finite(forecast.uncertainty_c) ? `±${formatNumber(forecast.uncertainty_c, 1)}°C` : 'uncertainty unavailable';
+    const horizon = finite(forecast.horizon_hours) ? `${formatNumber(forecast.horizon_hours, 0)}h` : '6h';
+    const limit = finite(forecast.time_to_limit_hours) ? `limit in ${formatNumber(forecast.time_to_limit_hours, 1)}h` : forecast.possible_limit_breach ? 'uncertain limit breach possible' : `no limit breach in ${horizon}`;
+    return `<span class="thermal-forecast">SIMULATED · ${horizon} ${formatNumber(forecast.forecast_temperature_c, 1)}°C ${uncertainty}</span><span class="thermal-limit">${escapeHtml(limit)}</span>`;
+  }
+
+  function drawPowerCutForecastChart(forecast) {
+    const canvas = els.powerCutChart;
+    if (!canvas) return;
+    const points = forecast && Array.isArray(forecast.trajectory) ? forecast.trajectory : [];
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(320, rect.width || canvas.parentElement?.clientWidth || 320);
+    const height = Math.max(210, rect.height || 230);
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = width * ratio; canvas.height = height * ratio;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0); ctx.clearRect(0, 0, width, height);
+    canvas.setAttribute('aria-label', 'Simulated fridge temperature forecast after a power cut');
+    if (!points.length) { ctx.fillStyle = '#b4c7db'; ctx.font = '14px system-ui'; ctx.fillText('No simulated forecast available', 18, height / 2); return; }
+    const values = points.flatMap((point) => [Number(point.low_c), Number(point.high_c), Number(point.temperature_c)]).filter(Number.isFinite);
+    const minTemp = Math.min(0, Math.floor(Math.min(...values, 2) - 1));
+    const maxTemp = Math.max(10, Math.ceil(Math.max(...values, 8) + 1));
+    const pad = { left: 42, right: 18, top: 14, bottom: 30 };
+    const plotW = width - pad.left - pad.right; const plotH = height - pad.top - pad.bottom;
+    const x = (index) => pad.left + (points.length === 1 ? plotW / 2 : index / (points.length - 1) * plotW);
+    const y = (value) => pad.top + (maxTemp - Number(value)) / (maxTemp - minTemp) * plotH;
+    ctx.font = '12px system-ui'; ctx.lineWidth = 1;
+    for (let value = minTemp; value <= maxTemp; value += 2) {
+      const lineY = y(value); ctx.strokeStyle = 'rgba(141,167,182,.22)'; ctx.beginPath(); ctx.moveTo(pad.left, lineY); ctx.lineTo(pad.left + plotW, lineY); ctx.stroke(); ctx.fillStyle = '#b4c7db'; ctx.fillText(`${value}°`, 4, lineY + 4);
+    }
+    [2, 6, 8].forEach((limit) => {
+      const lineY = y(limit); ctx.strokeStyle = limit === 6 ? '#ffdc90' : '#ffa2a6'; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(pad.left, lineY); ctx.lineTo(pad.left + plotW, lineY); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle = limit === 6 ? '#ffdc90' : '#ffa2a6'; ctx.fillText(`${limit}°`, width - 16, lineY + 4);
+    });
+    ctx.beginPath(); points.forEach((point, index) => { index ? ctx.lineTo(x(index), y(point.high_c)) : ctx.moveTo(x(index), y(point.high_c)); });
+    for (let index = points.length - 1; index >= 0; index -= 1) ctx.lineTo(x(index), y(points[index].low_c));
+    ctx.closePath(); ctx.fillStyle = 'rgba(86,224,206,.16)'; ctx.fill();
+    ctx.beginPath(); points.forEach((point, index) => { index ? ctx.lineTo(x(index), y(point.temperature_c)) : ctx.moveTo(x(index), y(point.temperature_c)); }); ctx.strokeStyle = '#56e0ce'; ctx.lineWidth = 2.5; ctx.stroke();
+    points.forEach((point, index) => { ctx.beginPath(); ctx.arc(x(index), y(point.temperature_c), 3, 0, Math.PI * 2); ctx.fillStyle = '#56e0ce'; ctx.fill(); ctx.fillStyle = '#b4c7db'; ctx.font = '12px system-ui'; ctx.fillText(`${point.hours_ahead}h`, x(index) - 7, height - 8); });
+  }
+
+  function renderPowerCutForecast(data) {
+    if (!els.powerCutForecastPanel) return;
+    const clinics = Array.isArray(data && data.clinics) ? data.clinics : [];
+    const selected = clinics.find((clinic) => String(clinic.id) === String(els.clinicSelect.value)) || clinics[0];
+    const forecast = selected && selected.power_cut_forecast;
+    if (!selected || !forecast) {
+      ['powerCutForecastClinic', 'powerCutCurrentTemp', 'powerCutAmbientTemp', 'powerCutAfter1h', 'powerCutAfter2h', 'powerCutAfter6h', 'powerCutTimeToLimit'].forEach((id) => { if ($(id)) $(id).textContent = 'Unavailable'; });
+      if (els.powerCutForecastStatus) { els.powerCutForecastStatus.className = 'badge unknown'; els.powerCutForecastStatus.textContent = 'SIMULATED · UNKNOWN'; }
+      if (els.powerCutForecastNote) els.powerCutForecastNote.textContent = 'No current simulated state is available.';
+      drawPowerCutForecastChart(null); return;
+    }
+    const status = String(forecast.power_cut_status || 'Unknown');
+    els.powerCutForecastClinic.textContent = `${selected.id} · ${selected.name}`;
+    els.powerCutCurrentTemp.textContent = finite(forecast.current_temperature_c) ? `${formatNumber(forecast.current_temperature_c, 1)}°C` : 'Unavailable';
+    els.powerCutAmbientTemp.textContent = finite(forecast.ambient_temperature_c) ? `${formatNumber(forecast.ambient_temperature_c, 1)}°C` : 'Unavailable';
+    const safe = forecast.safe_range_c || { low_c: 2, high_c: 8 };
+    els.powerCutSafeRange.textContent = `${formatNumber(safe.low_c, 0)}–${formatNumber(safe.high_c, 0)}°C`;
+    els.powerCutLimit.textContent = finite(forecast.configured_limit_c) ? `>${formatNumber(forecast.configured_limit_c, 1)}°C` : 'Unavailable';
+    els.powerCutAfter1h.textContent = finite(forecast.after_1h_c) ? `${formatNumber(forecast.after_1h_c, 1)}°C` : 'Unavailable';
+    els.powerCutAfter2h.textContent = finite(forecast.after_2h_c) ? `${formatNumber(forecast.after_2h_c, 1)}°C` : 'Unavailable';
+    els.powerCutAfter6h.textContent = finite(forecast.after_6h_c) ? `${formatNumber(forecast.after_6h_c, 1)}°C` : 'Unavailable';
+    els.powerCutTimeToLimit.textContent = finite(forecast.time_to_limit_hours) ? `${formatNumber(forecast.time_to_limit_hours, 1)}h` : forecast.possible_limit_breach ? 'Uncertain' : 'No breach';
+    els.powerCutForecastStatus.className = `badge ${riskClass(status)}`; els.powerCutForecastStatus.textContent = `SIMULATED · ${status.toUpperCase()}`;
+    els.powerCutChartNote.textContent = forecast.reliability === 'reliable' ? 'SIMULATED ESTIMATES' : 'SIMULATED · LIMITED RELIABILITY';
+    els.powerCutForecastNote.textContent = `${forecast.note || 'SIMULATED estimate.'} Safe range: ${formatNumber(safe.low_c, 0)}–${formatNumber(safe.high_c, 0)}°C. Existing Trip feeder and Local fault controls change the live state; this panel is the hypothetical cut outlook.`;
+    drawPowerCutForecastChart(forecast);
+  }
+
   function renderTable(data) {
     const clinics = Array.isArray(data.clinics) ? data.clinics : [];
     const query = els.search.value.trim().toLowerCase(); const risk = els.riskFilter.value; const feeder = els.feederFilter.value;
@@ -406,13 +481,28 @@
       const hazard = cold || hot ? `<span class="hazard-tag">${clinic.data_quality === 'ok' ? 'Observed' : 'Last known'}: ${cold ? 'too cold (<2°C)' : 'too hot (>8°C)'}</span>` : '';
       const powerLabel = clinic.data_quality && clinic.data_quality !== 'ok' ? 'Unknown / last known' : clinic.power_on == null ? 'Unknown' : power ? 'Online' : 'Offline';
       const status = clinic.status ? `<span class="clinic-id">${escapeHtml(clinic.status)}</span>` : '';
-      return `<tr><td><span class="clinic-name">${escapeHtml(clinic.name)}</span><span class="clinic-id">${escapeHtml(clinic.id)}</span>${status}<span class="clinic-id">Source: ${escapeHtml(text(clinic.source || clinic.risk_source))} · Quality: ${escapeHtml(text(clinic.data_quality))}</span></td><td class="feeder-cell">${escapeHtml(feederName(clinic.feeder_id))}</td><td><span class="power-state ${power && clinic.data_quality === 'ok' ? '' : 'off'}"><i></i>${powerLabel}</span></td><td><div class="temp-stack"><span class="temp ${cold ? 'cold' : hot || alarm.active ? 'hot alarm' : ''}">${formatNumber(clinic.temperature_c, 1)}${finite(clinic.temperature_c) ? '°C' : ''}</span>${alarmBadge}${hazard}</div></td><td><span class="weather"><span>☂ <b>${formatNumber(clinic.forecast_rain_next_6h, 1)} mm</b></span><span>≋ <b>${formatNumber(clinic.forecast_wind_next_6h, 1)} km/h</b></span></span></td><td><div class="risk-cell"><span class="risk-value">${percent(clinic.risk_probability)}</span><span class="badge ${levelClass}">${escapeHtml(level)}</span></div></td></tr>`;
+       return `<tr><td><span class="clinic-name">${escapeHtml(clinic.name)}</span><span class="clinic-id">${escapeHtml(clinic.id)}</span>${status}<span class="clinic-id">Source: ${escapeHtml(text(clinic.source || clinic.risk_source))} · Quality: ${escapeHtml(text(clinic.data_quality))}</span></td><td class="feeder-cell">${escapeHtml(feederName(clinic.feeder_id))}</td><td><span class="power-state ${power && clinic.data_quality === 'ok' ? '' : 'off'}"><i></i>${powerLabel}</span></td><td><div class="temp-stack"><span class="temp ${cold ? 'cold' : hot || alarm.active ? 'hot alarm' : ''}">${formatNumber(clinic.temperature_c, 1)}${finite(clinic.temperature_c) ? '°C' : ''}</span>${thermalForecastMarkup(clinic)}${alarmBadge}${hazard}</div></td><td><span class="weather"><span>☂ <b>${formatNumber(clinic.forecast_rain_next_6h, 1)} mm</b></span><span>≋ <b>${formatNumber(clinic.forecast_wind_next_6h, 1)} km/h</b></span></span></td><td><div class="risk-cell"><span class="risk-value">${percent(clinic.risk_probability)}</span><span class="badge ${levelClass}">${escapeHtml(level)}</span></div></td></tr>`;
     }).join('') : '<tr><td colspan="6" class="empty-cell">No clinics match the current filters.</td></tr>';
-    els.tableSummary.textContent = `Showing ${rows.length} of ${clinics.length} clinics · Model probabilities appear only when available. Observed temperature violations elevate risk independently. Readings with stale quality are last known.`;
+     els.tableSummary.textContent = `Showing ${rows.length} of ${clinics.length} clinics · SIMULATED thermal forecasts use Newton cooling with uncertainty; model probabilities appear only when available. Observed temperature violations elevate risk independently. Readings with stale quality are last known.`;
   }
 
   function renderState(data, receivedAt) {
-    state.live = data; renderHeader(data); renderSummary(data); renderFeeders(data); renderSelects(data); renderTemperatureAlarm(data, receivedAt); renderTable(data);
+    state.live = data; renderHeader(data); renderSummary(data); renderFeeders(data); renderSelects(data); renderTemperatureAlarm(data, receivedAt); renderTable(data); renderPowerCutForecast(data);
+  }
+
+  function renderThermalValidation(data) {
+    if (!els.thermalForecastValidation || !els.thermalValidationText) return;
+    const validation = data && data.thermal_forecast_validation;
+    if (!validation) {
+      els.thermalForecastValidation.classList.add('unavailable');
+      els.thermalValidationText.textContent = 'SIMULATED validation results are unavailable.';
+      return;
+    }
+    const failure = validation.failure_scenarios || {};
+    const crossing = finite(validation.threshold_crossing_time_mae_hours) ? `${formatNumber(validation.threshold_crossing_time_mae_hours, 2)}h` : 'no matched crossings';
+    const failureMae = finite(failure.mae_c) ? `${formatNumber(failure.mae_c, 2)}°C` : 'unavailable';
+    els.thermalForecastValidation.classList.remove('unavailable');
+    els.thermalValidationText.textContent = `Held-out synthetic scenarios · MAE ${formatNumber(validation.mae_c, 2)}°C · RMSE ${formatNumber(validation.rmse_c, 2)}°C · threshold-crossing error ${crossing} · failure MAE ${failureMae}. Synthetic validation only.`;
   }
 
   function drawChart(canvas, points, color, ariaLabel) {
@@ -432,6 +522,7 @@
 
   function renderModel(data) {
     state.model = data;
+    renderThermalValidation(data);
     if (!data || data.ready !== true) { els.modelStatus.textContent = 'Rules-only / profile unavailable';els.modelStatus.className='model-status not-ready';els.modelUnavailable.textContent = 'Model profile is unavailable or not ready. Deterministic safeguards remain independent of model availability; missing predictions are not zero risk.';els.modelUnavailable.hidden=false;els.modelContent.hidden=true;return; }
     els.modelUnavailable.hidden = true; els.modelContent.hidden = false; els.modelStatus.textContent = data.model_name ? `${data.model_name} · ready` : 'Model ready'; els.modelStatus.className='model-status';
     const metrics = data.metrics || {}, dataset = data.dataset || {};
@@ -660,8 +751,8 @@
   $('restoreClinic').addEventListener('click', () => performAction('restore_clinic', { clinic_id: els.clinicSelect.value }));
   $('freezeClinic').addEventListener('click', () => performAction('freeze_clinic', { clinic_id: els.clinicSelect.value }));
   $('advance1').addEventListener('click', () => performAction('advance', { hours: 1 })); $('advance6').addEventListener('click', () => performAction('advance', { hours: 6 })); $('resetSimulation').addEventListener('click', () => performAction('reset'));
-  els.search.addEventListener('input', () => state.live && renderTable(state.live)); els.riskFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.feederFilter.addEventListener('change', () => state.live && renderTable(state.live)); $('dismissError').addEventListener('click', hideError); els.alarmSoundButton.addEventListener('pointerdown', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('touchstart', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('click', toggleAlarmSound);
-  window.addEventListener('resize', () => { if (state.model && !els.modelContent.hidden) { drawChart($('reliabilityChart'), state.model.calibration, '#38d6c3', 'Reliability curve: observed outcome versus predicted probability'); drawChart($('rocChart'), state.model.roc_curve, '#f5a35b', 'ROC curve: true positive rate versus false positive rate'); } });
+  els.search.addEventListener('input', () => state.live && renderTable(state.live)); els.riskFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.feederFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.clinicSelect.addEventListener('change', () => state.live && renderPowerCutForecast(state.live)); $('dismissError').addEventListener('click', hideError); els.alarmSoundButton.addEventListener('pointerdown', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('touchstart', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('click', toggleAlarmSound);
+  window.addEventListener('resize', () => { if (state.live) renderPowerCutForecast(state.live); if (state.model && !els.modelContent.hidden) { drawChart($('reliabilityChart'), state.model.calibration, '#38d6c3', 'Reliability curve: observed outcome versus predicted probability'); drawChart($('rocChart'), state.model.roc_curve, '#f5a35b', 'ROC curve: true positive rate versus false positive rate'); } });
   $('alertsList').addEventListener('click', async (event) => {
     const button = event.target.closest('[data-ack]');
     if (!button || button.disabled) return;

@@ -1,0 +1,240 @@
+{
+  "status": "SIMULATED",
+  "pipeline_note": "Repository baseline is XGBoost spoilage prediction; outage review uses a separate XGBoost outage-start model because no LightGBM model exists here.",
+  "config": {
+    "days": 180,
+    "tuning_seed": 2025,
+    "evaluation_seed": 2026,
+    "horizon_hours": 6,
+    "matched_false_alarm_budget": 0.05,
+    "bootstrap_samples": 300,
+    "random_state": 2026
+  },
+  "worlds": {
+    "tuning_seed": 2025,
+    "evaluation_seed": 2026,
+    "days_each": 180
+  },
+  "outage_rate": {
+    "tuning_clinic_hours": 0.024687,
+    "evaluation_clinic_hours": 0.030436,
+    "tuning_new_outage_rate_grid_up": 0.006453,
+    "evaluation_new_outage_rate_grid_up": 0.007184
+  },
+  "baselines_new_outages_grid_up": {
+    "flat_per_clinic_rate": {
+      "rows": 83654,
+      "positive_rate": 0.007184,
+      "pr_auc": 0.0078,
+      "roc_auc": 0.5283,
+      "lift_top5": 0.8319,
+      "top5_positive_rate": 0.005977,
+      "threshold": 0.010046,
+      "false_alarm_rate": 0.100887,
+      "recall": 0.005578
+    },
+    "hour_plus_rain_rule": {
+      "rows": 83654,
+      "positive_rate": 0.007184,
+      "pr_auc": 0.0067,
+      "roc_auc": 0.4646,
+      "lift_top5": 0.9317,
+      "top5_positive_rate": 0.006694,
+      "threshold": 0.012281,
+      "false_alarm_rate": 0.085415,
+      "recall": 0.005886
+    },
+    "current_xgboost_outage_model": {
+      "rows": 83654,
+      "positive_rate": 0.007184,
+      "pr_auc": 0.0063,
+      "roc_auc": 0.4481,
+      "lift_top5": 0.4991,
+      "top5_positive_rate": 0.003586,
+      "threshold": 0.011368,
+      "false_alarm_rate": 0.224363,
+      "recall": 0.003956
+    },
+    "plain_6c_prealarm": {
+      "rows": 83654,
+      "positive_rate": 0.020035,
+      "pr_auc": 0.1386,
+      "roc_auc": 0.6698,
+      "lift_top5": 7.1475,
+      "top5_positive_rate": 0.143199,
+      "threshold": 6.0,
+      "false_alarm_rate": 0.0,
+      "recall": 0.0
+    }
+  },
+  "current_model_permutation_importance": [
+    {
+      "feature": "clinic_index",
+      "mean_ap_decrease": 3e-05
+    },
+    {
+      "feature": "is_evening",
+      "mean_ap_decrease": 2e-05
+    },
+    {
+      "feature": "feeder_outage_events_prev72",
+      "mean_ap_decrease": -2e-06
+    },
+    {
+      "feature": "feeder_outage_hours_prev24",
+      "mean_ap_decrease": -4e-06
+    },
+    {
+      "feature": "forecast_wind_next_6h",
+      "mean_ap_decrease": -0.000108
+    },
+    {
+      "feature": "hour",
+      "mean_ap_decrease": -0.000194
+    },
+    {
+      "feature": "day_of_week",
+      "mean_ap_decrease": -0.000196
+    },
+    {
+      "feature": "feeder_id",
+      "mean_ap_decrease": -0.000295
+    },
+    {
+      "feature": "forecast_rain_next_6h",
+      "mean_ap_decrease": -0.000301
+    },
+    {
+      "feature": "outdoor_temp_c",
+      "mean_ap_decrease": -0.000518
+    }
+  ],
+  "early_warning": {
+    "status": "SIMULATED",
+    "evaluation_breach_events": 385,
+    "matched_false_alarm_budget": 0.0147,
+    "combined_threshold": 0.0057,
+    "categories": {
+      "warned_before_power_failed": {
+        "count": 61,
+        "percentage": 15.84,
+        "count_ci95": [
+          47,
+          76
+        ],
+        "percentage_ci95": [
+          12.21,
+          19.74
+        ]
+      },
+      "warned_only_after_power_failed": {
+        "count": 323,
+        "percentage": 83.9,
+        "count_ci95": [
+          310,
+          334
+        ],
+        "percentage_ci95": [
+          80.52,
+          86.75
+        ]
+      },
+      "not_warned": {
+        "count": 1,
+        "percentage": 0.26,
+        "count_ci95": [
+          0,
+          4
+        ],
+        "percentage_ci95": [
+          0.0,
+          1.04
+        ]
+      }
+    },
+    "plain_6c_prealarm_categories": {
+      "warned_before_power_failed": {
+        "count": 18,
+        "percentage": 4.68,
+        "count_ci95": [
+          9,
+          26
+        ],
+        "percentage_ci95": [
+          2.46,
+          6.75
+        ]
+      },
+      "warned_only_after_power_failed": {
+        "count": 366,
+        "percentage": 95.06,
+        "count_ci95": [
+          357,
+          374
+        ],
+        "percentage_ci95": [
+          92.73,
+          97.14
+        ]
+      },
+      "not_warned": {
+        "count": 1,
+        "percentage": 0.26,
+        "count_ci95": [
+          0,
+          3
+        ],
+        "percentage_ci95": [
+          0.0,
+          0.78
+        ]
+      }
+    },
+    "outage_score_categories": {
+      "warned_before_power_failed": {
+        "count": 14,
+        "percentage": 3.64,
+        "count_ci95": [
+          7,
+          22
+        ],
+        "percentage_ci95": [
+          1.94,
+          5.71
+        ]
+      },
+      "warned_only_after_power_failed": {
+        "count": 370,
+        "percentage": 96.1,
+        "count_ci95": [
+          362,
+          377
+        ],
+        "percentage_ci95": [
+          94.03,
+          97.92
+        ]
+      },
+      "not_warned": {
+        "count": 1,
+        "percentage": 0.26,
+        "count_ci95": [
+          0,
+          4
+        ],
+        "percentage_ci95": [
+          0.0,
+          1.04
+        ]
+      }
+    },
+    "lead_time_hours": {
+      "count": 61,
+      "mean": 3.311,
+      "median": 3.0,
+      "share_at_least_travel_time": 0.7869,
+      "travel_time_assumption_hours": 2.0
+    },
+    "note": "Combined risk uses the outage score, empirical outage-duration survival, and a Newton-cooling safe-hours estimate. All metrics are simulated."
+  }
+}

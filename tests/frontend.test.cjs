@@ -260,3 +260,45 @@ test('uncertain mutation locks retries until a successful explicit refresh', asy
   await until(() => !ui.$('tripFeeder').disabled);
   assert.equal(ui.calls.filter((call) => call.url === '/api/simulate').length, 1);
 });
+
+test('dashboard shows simulated thermal forecast, uncertainty, and countdown without changing alarm behavior', async (t) => {
+  const ui = setup(); t.after(() => ui.dom.window.close());
+  await until(() => ui.$('temperatureAlarmCount').textContent === '0' && !ui.$('refreshButton').disabled);
+  ui.live.clinics[0].thermal_forecast = {
+    status: 'SIMULATED', reliability: 'reliable', horizon_hours: 6,
+    forecast_temperature_c: 7.4, uncertainty_c: 0.6, time_to_limit_hours: 2.5
+  };
+  ui.$('refreshButton').click();
+  await until(() => /SIMULATED/.test(ui.$('clinicTableBody').firstElementChild.textContent));
+  assert.match(ui.$('clinicTableBody').firstElementChild.textContent, /7\.4°C/);
+  assert.match(ui.$('clinicTableBody').firstElementChild.textContent, /±0\.6°C/);
+  assert.match(ui.$('clinicTableBody').firstElementChild.textContent, /limit in 2\.5h/);
+});
+
+test('dashboard shows exact simulated power-cut horizons and forecast status for the selected clinic', async (t) => {
+  const ui = setup(); t.after(() => ui.dom.window.close());
+  await until(() => ui.$('systemHealth').textContent === 'Healthy' && !ui.$('refreshButton').disabled);
+  ui.live.clinics[0].power_cut_forecast = {
+    status: 'SIMULATED', scenario: 'power_cut', reliability: 'reliable',
+    power_cut_status: 'Critical', current_temperature_c: 4.2, ambient_temperature_c: 25.5,
+    safe_range_c: { low_c: 2, high_c: 8 }, configured_limit_c: 6,
+    after_1h_c: 5.3, after_2h_c: 6.5, after_6h_c: 10.7,
+    time_to_limit_hours: 2, possible_limit_breach: true,
+    trajectory: [
+      { hours_ahead: 1, temperature_c: 5.3, low_c: 5.1, high_c: 5.5 },
+      { hours_ahead: 2, temperature_c: 6.5, low_c: 6.2, high_c: 6.8 },
+      { hours_ahead: 3, temperature_c: 7.6, low_c: 7.2, high_c: 8.1 },
+      { hours_ahead: 4, temperature_c: 8.7, low_c: 8.3, high_c: 9.1 },
+      { hours_ahead: 5, temperature_c: 9.8, low_c: 9.3, high_c: 10.3 },
+      { hours_ahead: 6, temperature_c: 10.7, low_c: 10.2, high_c: 11.2 }
+    ],
+    note: 'SIMULATED power-cut estimate.'
+  };
+  ui.$('refreshButton').click();
+  await until(() => ui.$('powerCutForecastClinic').textContent.includes('CL-01'));
+  assert.equal(ui.$('powerCutAfter1h').textContent, '5.3°C');
+  assert.equal(ui.$('powerCutAfter2h').textContent, '6.5°C');
+  assert.equal(ui.$('powerCutAfter6h').textContent, '10.7°C');
+  assert.equal(ui.$('powerCutTimeToLimit').textContent, '2.0h');
+  assert.match(ui.$('powerCutForecastStatus').textContent, /CRITICAL/);
+});

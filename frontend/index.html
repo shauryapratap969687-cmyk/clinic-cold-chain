@@ -99,6 +99,15 @@
           <div class="control-cluster time-controls"><label>Advance simulation</label><div class="button-row"><button class="btn btn-ghost" id="advance1" data-action-control>+1 hour</button><button class="btn btn-ghost" id="advance6" data-action-control>+6 hours</button><button class="btn btn-reset" id="resetSimulation" data-action-control>Reset</button></div><small>Temperature evolves over simulated time.</small></div>
         </div>
       </section>
+      <section class="section-block power-cut-forecast-section" id="powerCutForecast" aria-labelledby="powerCutForecastHeading">
+        <div class="section-heading"><div><p class="section-kicker">SIMULATED ESTIMATES</p><h3 id="powerCutForecastHeading">Fridge temperature after a power cut</h3><p class="muted">Select a clinic above. This is a hypothetical six-hour cut using its current simulated temperature, ambient temperature and insulation; it does not mutate the simulation.</p></div><span id="powerCutForecastStatus" class="badge safe">SIMULATED · SAFE</span></div>
+        <div class="power-cut-forecast-grid">
+          <div class="power-cut-forecast-summary"><div><span class="label">SELECTED CLINIC</span><strong id="powerCutForecastClinic">—</strong></div><div><span class="label">CURRENT SIMULATED TEMP</span><strong id="powerCutCurrentTemp">—</strong></div><div><span class="label">AMBIENT TEMP</span><strong id="powerCutAmbientTemp">—</strong></div><div><span class="label">SAFE RANGE</span><strong id="powerCutSafeRange">2–8°C</strong></div><div><span class="label">EARLY-WARNING LIMIT</span><strong id="powerCutLimit">&gt;6°C</strong></div></div>
+          <div class="power-cut-chart-card"><div class="power-cut-chart-heading"><span>FORECAST GRAPH · NO COMPRESSOR COOLING</span><span id="powerCutChartNote">SIMULATED ESTIMATES</span></div><div class="power-cut-chart-frame"><canvas id="powerCutForecastChart" role="img" aria-label="Simulated fridge temperature forecast for one, two, and six hours after a power cut"></canvas></div><div class="power-cut-chart-legend"><span><i class="power-cut-key mean"></i> Estimated</span><span><i class="power-cut-key band"></i> Uncertainty</span><span><i class="power-cut-key limit"></i> Limits</span></div></div>
+          <div class="power-cut-horizon-grid"><div><span>AFTER 1 HOUR</span><strong id="powerCutAfter1h">—</strong></div><div><span>AFTER 2 HOURS</span><strong id="powerCutAfter2h">—</strong></div><div><span>AFTER 6 HOURS</span><strong id="powerCutAfter6h">—</strong></div><div><span>TIME TO LIMIT</span><strong id="powerCutTimeToLimit">—</strong></div></div>
+        </div>
+        <p id="powerCutForecastNote" class="power-cut-forecast-note" role="status">Waiting for a current simulated state…</p>
+      </section>
 
       <section class="section-block clinic-section" aria-labelledby="clinicHeading">
         <div class="section-heading table-heading"><div><p class="section-kicker">LIVE INVENTORY</p><h3 id="clinicHeading">Clinic risk register</h3></div><div class="table-tools"><label class="search-box"><span aria-hidden="true">⌕</span><input id="clinicSearch" type="search" placeholder="Search clinic or ID" aria-label="Search clinic or ID"></label><label class="sr-only" for="riskFilter">Risk filter</label><select id="riskFilter"><option value="all">All risk</option><option value="Critical">Critical</option><option value="Warning">Warning</option><option value="Safe">Safe</option></select><label class="sr-only" for="feederFilter">Feeder filter</label><select id="feederFilter"><option value="all">All feeders</option></select></div></div>
@@ -119,6 +128,7 @@
           </div>
           <div id="modelNotes" class="model-notes" hidden><strong>Model notes</strong><ul></ul></div>
         </div>
+        <div id="thermalForecastValidation" class="thermal-validation" role="status"><strong>SIMULATED thermal forecast validation</strong><span id="thermalValidationText">Waiting for held-out synthetic scenario results…</span></div>
       </section>
 
       <section class="section-block" aria-labelledby="monitorHeading">
@@ -134,7 +144,7 @@
       </section>
       <section class="section-block" id="readiness" aria-labelledby="readinessHeading"><div class="section-heading"><div><p class="section-kicker">BOUNDARIES &amp; SAFEGUARDS</p><h3 id="readinessHeading">Readiness, with evidence</h3></div><span class="badge warning">Not clinically validated</span></div><div class="readiness-callout"><h4>Qualified signoff is required before clinical use.</h4><p>This is a nonmedical demonstration. Clinical validation, hardware commissioning and real notification delivery are separate work. Default hardware and notification integrations are not connected. No certification or production-readiness claim is made.</p></div><p id="policyStatus" class="panel-status" role="status">Waiting for safety policy…</p><div id="policyContent" class="ops-card skeleton-block">Loading deterministic safeguards…</div></section>
       <section class="section-block" id="auditSection" hidden aria-labelledby="auditHeading"><div class="section-heading"><div><p class="section-kicker">ACCOUNTABILITY</p><h3 id="auditHeading">Audit trail</h3></div><span class="badge">Admin &amp; auditor access</span></div><p id="auditStatus" class="panel-status" role="status">Waiting for audit…</p><div id="auditContent" class="ops-card">Loading audit entries…</div></section>
-      <footer class="footer"><span><span class="footer-mark">✦</span> ColdChain Resilience Lab</span><span>Demonstration only. Sources are labelled in the workspace. Observed temperature violations remain independent of model forecasts.</span></footer>
+      <footer class="footer"><span><span class="footer-mark">✦</span> ColdChain Resilience Lab</span><span>SIMULATED ONLY: the fridge physics model provides a tested countdown after a simulated outage; outage forecasting is weak and no real-sensor or clinical accuracy is claimed.</span></footer>
     </main>
   </div>
   <div id="toastRegion" class="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>

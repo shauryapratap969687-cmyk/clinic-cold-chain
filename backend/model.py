@@ -11,6 +11,7 @@ import pandas as pd
 
 from .features import FEATURE_COLUMNS, build_feature_frame
 from .synthetic import SyntheticConfig, generate_dataset
+from .thermal import thermal_forecast_validation
 
 HORIZON_HOURS = 6
 ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
@@ -137,6 +138,7 @@ def train_and_persist(days: int = 240, seed: int = 42, artifact_dir: Path | None
         "calibration": _calibration_rows(test_y, test_prob),
         "feature_importance": [{"feature": name, "importance": float(value)}
                                for name, value in zip(FEATURE_COLUMNS, importance)],
+        "thermal_forecast_validation": thermal_forecast_validation(seed=seed + 100_000),
         "confusion_matrix": matrix,
         "roc_curve": [{"fpr": float(a), "tpr": float(b)} for a, b in zip(fpr, tpr)],
         "notes": [
