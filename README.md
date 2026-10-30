@@ -367,7 +367,7 @@ See [operations guide](docs/OPERATIONS.md).
 | Area | Implemented here | Not claimed |
 |---|---|---|
 | Feeder telemetry | Validated API ingestion, visible shared-feeder state | Physical device/SCADA connection or device identity provisioning |
-| Authentication | Required-auth mode, hashed passwords, roles, token expiry, Authority system-wide access, assigned-clinic operator scope | SSO/MFA and multi-tenant isolation beyond assigned clinics |
+| Authentication | Required-auth mode, hashed passwords, roles, token expiry, assigned-clinic operator scope | SSO/MFA and multi-tenant isolation beyond assigned clinics |
 | Storage | SQLite durable history and runtime snapshot | Highly available/atomic distributed event pipeline |
 | Weather | Configurable Open-Meteo adapter, cache, timeout/fallback | Provider availability/SLA or live-model validity |
 | Escalation | In-app worker, acknowledgement/recovery/recurrence, demo outbox | Real SMS/email/calls or external delivery receipts |

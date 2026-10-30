@@ -65,7 +65,7 @@ class FeederTelemetryRequest(BaseModel):
 
 class ClinicTelemetryRequest(BaseModel):
     model_config = {"allow_inf_nan": False}
-    clinic_id: str = Field(pattern=r"^CL-[A-Z0-9][A-Z0-9_-]{0,31}$")
+    clinic_id: str = Field(pattern=r"^CL-(0[1-9]|1[0-9]|20)$")
     temperature_c: float = Field(ge=-80, le=100)
     humidity_pct: float = Field(default=65, ge=0, le=100)
     power_on: bool = True
@@ -82,26 +82,8 @@ class FeedbackRequest(BaseModel):
 
 
 class SMSReplyRequest(BaseModel):
-    clinic_id: str = Field(pattern=r"^CL-[A-Z0-9][A-Z0-9_-]{0,31}$")
+    clinic_id: str = Field(pattern=r"^CL-(0[1-9]|1[0-9]|20)$")
     reply: str = Field(min_length=1, max_length=16)
-
-
-class ClinicRegistrationRequest(BaseModel):
-    model_config = {"extra": "forbid"}
-    clinic_id: str = Field(pattern=r"^CL-[A-Z0-9][A-Z0-9_-]{0,31}$")
-    name: str = Field(min_length=1, max_length=160)
-    location: str = Field(min_length=1, max_length=160)
-    active: bool = True
-
-
-class FollowupRequest(BaseModel):
-    model_config = {"extra": "forbid"}
-    message: str = Field(min_length=1, max_length=2000)
-
-
-class FollowupResponseRequest(BaseModel):
-    model_config = {"extra": "forbid"}
-    response: str = Field(min_length=1, max_length=4000)
 
 
 class CodeFlowRequest(BaseModel):
@@ -171,10 +153,6 @@ def _alert_payload(alert: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _is_authority(principal: Principal) -> bool:
-    return principal.role in {"admin", "authority"}
-
-
 def _scoped_state(state: dict[str, Any], principal: Principal) -> dict[str, Any]:
     """Keep clinic operators restricted to their assigned clinic."""
     if principal.role != "clinic_operator":
@@ -198,26 +176,6 @@ def _scoped_state(state: dict[str, Any], principal: Principal) -> dict[str, Any]
     })
     result["summary"] = summary
     return result
-
-
-def _authority_rows(state: dict[str, Any], registry: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    live = {str(row["id"]): row for row in state.get("clinics", [])}
-    rows: list[dict[str, Any]] = []
-    for record in registry:
-        current = live.get(record["clinic_id"])
-        row = dict(record)
-        if current:
-            row.update(current)
-            row["location"] = record["location"]
-            row["connection_status"] = "online" if current.get("data_quality") == "ok" else str(current.get("data_quality") or "unknown")
-            row["power_status"] = "online" if current.get("power_on") is True else "offline" if current.get("power_on") is False else "unknown"
-        else:
-            row.update({"id": record["clinic_id"], "risk_level": "Unknown", "data_quality": "missing",
-                        "connection_status": "registered", "power_status": "unknown", "power_on": None,
-                        "temperature_c": None, "temperature_history": []})
-        row["active"] = bool(record["active"])
-        rows.append(row)
-    return rows
 
 
 def create_app() -> FastAPI:
@@ -347,7 +305,6 @@ def create_app() -> FastAPI:
                     app.state.simulation.restore_snapshot(snapshot)
                     app.state.initial_state_recorded = True
             current = app.state.simulation
-            store.sync_clinic_registry(current.state())
             if not app.state.initial_state_recorded:
                 _record_state(store, current.state(), "system", "simulation.startup")
                 app.state.initial_state_recorded = True
@@ -371,10 +328,6 @@ def create_app() -> FastAPI:
     def _state_response(state: dict[str, Any]) -> dict[str, Any]:
         state["status"] = state["telemetry_status"]
         return state
-
-    def _clinic_record(current: Simulation, clinic_id: str) -> dict[str, Any] | None:
-        state = current.state()
-        return next((row for row in state.get("clinics", []) if row.get("id") == clinic_id), None)
 
     def _require_assigned_clinic(principal: Principal, clinic_id: str) -> None:
         if principal.role == "clinic_operator" and principal.clinic_id != clinic_id:
@@ -450,13 +403,13 @@ def create_app() -> FastAPI:
     def simulate(request: SimulationRequest, principal: Principal = Depends(current_principal)) -> dict[str, Any]:
         current = ensure_runtime()
         _validate_request(request, current)
-        if request.action in {"trip_feeder", "restore_feeder"} and not (_is_authority(principal) or principal.role == "grid_operator"):
+        if request.action in {"trip_feeder", "restore_feeder"} and principal.role not in {"grid_operator", "admin"}:
             raise HTTPException(status_code=403, detail="Grid operator or admin role required for feeder actions")
-        if request.action in {"local_fault", "restore_clinic", "freeze_clinic"} and not (_is_authority(principal) or principal.role == "clinic_operator"):
+        if request.action in {"local_fault", "restore_clinic", "freeze_clinic"} and principal.role not in {"clinic_operator", "admin"}:
             raise HTTPException(status_code=403, detail="Clinic operator or admin role required for clinic actions")
         if request.action in {"local_fault", "restore_clinic", "freeze_clinic"} and principal.role == "clinic_operator":
             _require_assigned_clinic(principal, str(request.clinic_id))
-        if request.action in {"reset", "advance"} and not (_is_authority(principal) or principal.role in {"clinic_operator", "grid_operator"}):
+        if request.action in {"reset", "advance"} and principal.role not in {"clinic_operator", "grid_operator", "admin"}:
             raise HTTPException(status_code=403, detail="Operator or admin role required for simulation changes")
         with runtime_lock:
             if current.external_mode and request.action != "reset":
@@ -490,96 +443,6 @@ def create_app() -> FastAPI:
                 for clinic in sorted(state["clinics"], key=lambda row: row["priority_rank"] or 999)
             ],
         }
-
-    @app.get("/api/authority/summary")
-    def authority_summary(principal: Principal = Depends(require_roles("admin"))) -> dict[str, Any]:
-        """Return system-wide Authority dashboard counts."""
-        current = ensure_runtime()
-        rows = _authority_rows(current.state(), storage().clinic_registry())
-        active = [row for row in rows if row.get("active")]
-        return {
-            "total_clinics": len(rows),
-            "active_clinics": len(active),
-            "warning_clinics": sum(row.get("risk_level") == "Warning" for row in active),
-            "critical_clinics": sum(row.get("risk_level") == "Critical" for row in active),
-            "offline_clinics": sum(row.get("power_status") == "offline" or row.get("connection_status") in {"offline", "missing"} for row in active),
-            "pending_followups": len([row for row in storage().list_followups() if row.get("status") == "pending"]),
-            "simulated": True,
-        }
-
-    @app.get("/api/authority/clinics")
-    def authority_clinics(
-        search: str = Query("", max_length=160),
-        status: str = Query("all", max_length=32),
-        location: str = Query("", max_length=160),
-        risk_level: str = Query("all", max_length=32),
-        principal: Principal = Depends(require_roles("admin")),
-    ) -> dict[str, Any]:
-        current = ensure_runtime()
-        rows = _authority_rows(current.state(), storage().clinic_registry())
-        needle = search.strip().lower()
-        location_needle = location.strip().lower()
-        rows = [row for row in rows if (
-            not needle or needle in str(row.get("id", "")).lower() or needle in str(row.get("name", "")).lower()
-        ) and (
-            not location_needle or location_needle in str(row.get("location", "")).lower()
-        ) and (
-            status == "all" or status.lower() in {str(row.get("power_status", "")).lower(), str(row.get("connection_status", "")).lower()}
-        ) and (
-            risk_level == "all" or str(row.get("risk_level", "")).lower() == risk_level.lower()
-        )]
-        return {"clinics": rows, "total": len(rows), "simulated": True}
-
-    @app.post("/api/authority/clinics")
-    def register_authority_clinic(request: ClinicRegistrationRequest, principal: Principal = Depends(require_roles("admin"))) -> dict[str, Any]:
-        record = storage().register_clinic(request.clinic_id, request.name.strip(), request.location.strip(), request.active)
-        storage().audit("clinic.register", principal.username, request.clinic_id, record)
-        return {"clinic": record, "simulated": True}
-
-    @app.get("/api/authority/clinics/{clinic_id}")
-    def authority_clinic_detail(clinic_id: str, principal: Principal = Depends(require_roles("admin"))) -> dict[str, Any]:
-        current = ensure_runtime()
-        registry = next((row for row in storage().clinic_registry() if row["clinic_id"] == clinic_id), None)
-        if not registry:
-            raise HTTPException(status_code=404, detail="Clinic is not registered")
-        rows = _authority_rows(current.state(), [registry])
-        alerts = [row for row in storage().list_alerts(True) if row.get("entity_id") == clinic_id]
-        return {
-            "clinic": rows[0],
-            "temperature_history": storage().telemetry_history(clinic_id),
-            "forecast": next((row.get("thermal_forecast") for row in current.state().get("clinics", []) if row.get("id") == clinic_id), None),
-            "alerts": [_alert_payload(row) for row in _as_json_rows(alerts)],
-            "followups": storage().list_followups(clinic_id),
-            "simulated": True,
-        }
-
-    @app.get("/api/authority/followups")
-    def authority_followups(principal: Principal = Depends(require_roles("admin"))) -> dict[str, Any]:
-        return {"followups": storage().list_followups(), "simulated": True}
-
-    @app.post("/api/authority/clinics/{clinic_id}/followups")
-    def create_authority_followup(clinic_id: str, request: FollowupRequest, principal: Principal = Depends(require_roles("admin"))) -> dict[str, Any]:
-        if not storage().clinic_registry(clinic_id):
-            raise HTTPException(status_code=404, detail="Clinic is not registered")
-        followup = storage().create_followup(clinic_id, principal.username, request.message.strip())
-        storage().audit("clinic.followup.request", principal.username, clinic_id, {"followup_id": followup["id"]})
-        return {"followup": followup, "simulated": True}
-
-    @app.get("/api/clinic/followups")
-    def clinic_followups(principal: Principal = Depends(require_roles("clinic_operator"))) -> dict[str, Any]:
-        if not principal.clinic_id:
-            raise HTTPException(status_code=403, detail="Clinic account is not assigned to a clinic")
-        return {"followups": storage().list_followups(principal.clinic_id), "simulated": True}
-
-    @app.post("/api/clinic/followups/{followup_id}/respond")
-    def respond_to_followup(followup_id: int, request: FollowupResponseRequest, principal: Principal = Depends(require_roles("clinic_operator"))) -> dict[str, Any]:
-        if not principal.clinic_id:
-            raise HTTPException(status_code=403, detail="Clinic account is not assigned to a clinic")
-        result = storage().respond_followup(followup_id, principal.clinic_id, principal.username, request.response.strip())
-        if not result:
-            raise HTTPException(status_code=404, detail="Pending follow-up not found for this clinic")
-        storage().audit("clinic.followup.response", principal.username, principal.clinic_id, {"followup_id": followup_id})
-        return {"followup": result, "simulated": True}
 
     @app.post("/api/sms/reply")
     def sms_reply(request: SMSReplyRequest, principal: Principal = Depends(require_roles("clinic_operator", "admin"))) -> dict[str, Any]:
@@ -632,25 +495,16 @@ def create_app() -> FastAPI:
         _require_assigned_clinic(principal, request.clinic_id)
         with runtime_lock:
             current = ensure_runtime()
-            registered = bool(storage().clinic_registry(request.clinic_id))
-            if request.clinic_id not in current.clinics and not registered:
-                raise HTTPException(status_code=422, detail="clinic_id is not registered")
-            if request.clinic_id in current.clinics:
-                previous = current.clinics[request.clinic_id].get("observed_at") if current.external_mode else None
-            else:
-                latest = storage().latest_telemetry(request.clinic_id)
-                previous = latest.get("observed_at") if latest else None
+            if request.clinic_id not in current.clinics:
+                raise HTTPException(status_code=422, detail="clinic_id must be CL-01 through CL-20")
+            previous = current.clinics[request.clinic_id].get("observed_at") if current.external_mode else None
             observed_at = observation_time(request.observed_at, previous)
             payload = {**_dump(request), "observed_at": observed_at}
-            if request.clinic_id in current.clinics:
-                current.ingest_clinic(payload, observed_at)
-                quality = current._quality(observed_at)
-            else:
-                quality = "ok"
+            current.ingest_clinic(payload, observed_at)
+            quality = current._quality(observed_at)
             row_id = storage().record_telemetry(request.source, request.clinic_id, payload, observed_at, quality)
             storage().audit("telemetry.ingest", principal.username, request.clinic_id, payload)
-            if request.clinic_id in current.clinics:
-                _record_state(storage(), current.state(), principal.username, "telemetry.clinic", {request.clinic_id})
+            _record_state(storage(), current.state(), principal.username, "telemetry.clinic", {request.clinic_id})
             return {"accepted": True, "telemetry_id": row_id, "quality": quality, "observed_at": observed_at}
 
     @app.get("/api/weather")
@@ -732,7 +586,7 @@ def create_app() -> FastAPI:
                 "retention": "SQLite retains operational telemetry, alerts, events, audit entries, predictions, and feedback until an operator-managed database retention policy removes them",
                  "roles": {"clinic_operator": "assigned-clinic telemetry, controls, feedback, and read access",
                            "grid_operator": "feeder telemetry and feeder controls, read operations",
-                           "admin": "all operations and audit access", "authority": "system-wide clinic registry, monitoring, alerts, follow-ups, and permitted administration",
+                           "admin": "all operations and audit access",
                            "auditor": "read-only state, monitoring, alerts, audit, and events"},
                 "auth_mode": config.AUTH_MODE, "validation_status": "not_validated",
                 "thermal_forecast": "SIMULATED only; held-out synthetic validation reports temperature error and threshold-crossing error. No real-sensor or vaccine-stability claim is made.",

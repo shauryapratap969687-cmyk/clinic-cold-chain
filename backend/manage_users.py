@@ -10,7 +10,7 @@ def main() -> None:
     commands = parser.add_subparsers(dest="action", required=True)
     create = commands.add_parser("create")
     create.add_argument("username")
-    create.add_argument("--role", required=True, choices=["admin", "authority", "clinic_operator", "grid_operator", "auditor"])
+    create.add_argument("--role", required=True, choices=["admin", "clinic_operator", "grid_operator", "auditor"])
     create.add_argument("--clinic-id", help="Assigned clinic ID; required for clinic_operator users")
     disable = commands.add_parser("disable")
     disable.add_argument("username")

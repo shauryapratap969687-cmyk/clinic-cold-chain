@@ -35,8 +35,7 @@ to assigned clinics**. Do not deploy to independent tenants without that work.
 |---|---|---|
 | clinic_operator | Assigned clinic state, model, alerts, monitoring, weather, events, policy, follow-ups | Assigned clinic telemetry/scenarios, time/reset, acknowledgement, outcomes |
 | grid_operator | Same operational reads | Feeder telemetry/scenarios, time/reset, acknowledgement |
-| admin | All, including audit and Authority dashboard | All operational writes |
-| authority | All registered clinics, registry, details, alerts, follow-ups, responses, and audit | Permitted system-wide administrative actions |
+| admin | All, including audit | All operational writes |
 | auditor | All, including audit | None |
 
 An existing user's password/role is not reset on restart. Clinic operators should

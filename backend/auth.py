@@ -21,7 +21,7 @@ try:
 except ImportError:  # local minimal environments can still verify legacy records
     bcrypt = None
 
-ROLES = {"clinic_operator", "grid_operator", "admin", "authority", "auditor"}
+ROLES = {"clinic_operator", "grid_operator", "admin", "auditor"}
 _bearer = HTTPBearer(auto_error=False)
 
 
@@ -124,7 +124,7 @@ def require_roles(*roles: str) -> Callable[..., Principal]:
         raise ValueError(f"unsupported role in policy: {allowed - ROLES}")
 
     def dependency(principal: Principal = Depends(current_principal)) -> Principal:
-        if principal.role not in allowed and not (principal.role == "authority" and "admin" in allowed):
+        if principal.role not in allowed:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Role is not permitted for this operation")
         return principal
 

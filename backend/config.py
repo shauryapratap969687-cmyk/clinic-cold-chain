@@ -52,7 +52,7 @@ def validate() -> None:
     """Fail before serving; configuration remains monkeypatchable in tests."""
     if AUTH_MODE not in {"demo", "required"}:
         raise ValueError("COLDCHAIN_AUTH_MODE must be demo or required")
-    if DEMO_ROLE not in {"admin", "authority", "grid_operator", "clinic_operator", "auditor"}:
+    if DEMO_ROLE not in {"admin", "grid_operator", "clinic_operator", "auditor"}:
         raise ValueError("COLDCHAIN_DEMO_ROLE is invalid")
     if not ALLOWED_HOSTS:
         raise ValueError("COLDCHAIN_ALLOWED_HOSTS must contain at least one host")

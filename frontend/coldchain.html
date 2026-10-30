@@ -41,7 +41,7 @@
       </div>
     </header>
 
-    <nav class="section-nav" aria-label="Dashboard sections" id="sectionNav" hidden><a href="#overview" aria-current="location">Overview</a><a href="#operations">Operations</a><a href="#insights">Insights</a><a href="#readiness">Readiness</a><a id="authorityNav" href="#authoritySection" hidden>Authority</a><span id="sessionIdentity"></span><button id="logoutButton" class="btn btn-secondary">Sign out</button></nav>
+    <nav class="section-nav" aria-label="Dashboard sections" id="sectionNav" hidden><a href="#overview" aria-current="location">Overview</a><a href="#operations">Operations</a><a href="#insights">Insights</a><a href="#readiness">Readiness</a><span id="sessionIdentity"></span><button id="logoutButton" class="btn btn-secondary">Sign out</button></nav>
     <section id="authPanel" class="auth-panel" aria-labelledby="authHeading">
       <p class="section-kicker">SECURE WORKSPACE</p><h2 id="authHeading">Connect to your control room</h2>
       <p id="authStatus" role="status">Checking authentication configuration…</p>
@@ -86,30 +86,6 @@
         <article class="summary-card accent-blue"><div class="card-top"><span class="card-label">ACTIVE FEEDERS</span><span class="card-icon">◈</span></div><div class="metric-line"><strong id="activeFeeders">—</strong><span class="metric-denom">/ <span id="totalFeeders">—</span></span></div><p id="feederSub">Network availability</p><div class="progress"><span id="feederProgress"></span></div></article>
         <article class="summary-card accent-orange"><div class="card-top"><span class="card-label">SYSTEM HEALTH</span><span class="card-icon">◉</span></div><div class="health-line"><span id="healthDot" class="health-dot"></span><strong id="systemHealth">—</strong></div><p id="healthSub">Risk posture from live state</p><div class="health-track"><span id="healthTrack"></span></div></article>
         <article class="summary-card accent-red"><div class="card-top"><span class="card-label">HIGH RISK CLINICS</span><span class="card-icon">△</span></div><div class="metric-line"><strong id="criticalClinics">—</strong><span class="metric-denom">critical</span></div><p id="riskSub">Warning: —</p><div class="risk-bars"><span id="criticalBar"></span><span id="warningBar"></span><span class="risk-rest"></span></div></article>
-      </section>
-
-      <section class="section-block authority-section" id="authoritySection" hidden aria-labelledby="authorityHeading">
-        <div class="section-heading"><div><p class="section-kicker">SYSTEM-WIDE ADMINISTRATION</p><h3 id="authorityHeading">Authority dashboard</h3><p class="muted">One central view of every clinic registered in the system. Authority access is enforced by the backend.</p></div><span class="badge warning">SIMULATED ADMIN VIEW</span></div>
-        <div class="authority-summary-grid" aria-label="Authority clinic summary">
-          <article class="summary-card accent-blue"><span class="card-label">TOTAL CLINICS</span><div class="metric-line"><strong id="authorityTotalClinics">—</strong></div><p>Registered in the database</p></article>
-          <article class="summary-card accent-teal"><span class="card-label">ACTIVE CLINICS</span><div class="metric-line"><strong id="authorityActiveClinics">—</strong></div><p>Available for monitoring</p></article>
-          <article class="summary-card accent-orange"><span class="card-label">WARNINGS</span><div class="metric-line"><strong id="authorityWarningClinics">—</strong></div><p>Current warning risk</p></article>
-          <article class="summary-card accent-red"><span class="card-label">CRITICAL</span><div class="metric-line"><strong id="authorityCriticalClinics">—</strong></div><p>Current critical risk</p></article>
-          <article class="summary-card accent-violet"><span class="card-label">OFFLINE</span><div class="metric-line"><strong id="authorityOfflineClinics">—</strong></div><p>Power or connection offline</p></article>
-        </div>
-        <div class="authority-toolbar">
-          <label class="search-box"><span aria-hidden="true">⌕</span><input id="authoritySearch" type="search" maxlength="160" placeholder="Search name or clinic ID" aria-label="Search authority clinics"></label>
-          <label class="sr-only" for="authorityStatusFilter">Clinic status</label><select id="authorityStatusFilter"><option value="all">All status</option><option value="online">Online</option><option value="offline">Offline</option><option value="stale">Stale</option><option value="registered">Registered</option></select>
-          <label class="sr-only" for="authorityRiskFilter">Clinic risk</label><select id="authorityRiskFilter"><option value="all">All risk</option><option value="Critical">Critical</option><option value="Warning">Warning</option><option value="Safe">Safe</option><option value="Unknown">Unknown</option></select>
-          <label class="sr-only" for="authorityLocationFilter">Clinic location</label><input id="authorityLocationFilter" maxlength="160" placeholder="Filter location" aria-label="Filter authority clinics by location">
-          <button id="authorityRefresh" class="btn btn-secondary" type="button">Refresh clinics</button><button id="authorityRegisterToggle" class="btn btn-primary" type="button">Register clinic</button>
-        </div>
-        <form id="authorityRegisterForm" class="authority-register-form" hidden><strong>Register a clinic</strong><label for="authorityRegisterId">Clinic ID</label><input id="authorityRegisterId" pattern="CL-[A-Z0-9][A-Z0-9_-]{0,31}" maxlength="32" required placeholder="CL-21"><label for="authorityRegisterName">Clinic name</label><input id="authorityRegisterName" maxlength="160" required placeholder="North Ridge Clinic"><label for="authorityRegisterLocation">Location</label><input id="authorityRegisterLocation" maxlength="160" required placeholder="North district"><button class="btn btn-primary" type="submit">Register clinic</button><button id="authorityRegisterCancel" class="btn btn-secondary" type="button">Cancel</button><span id="authorityRegisterStatus" role="status"></span></form>
-        <div class="authority-layout">
-          <div class="table-scroll authority-table-scroll"><table><caption class="sr-only">All registered clinics with status, temperature and risk</caption><thead><tr><th scope="col">Clinic</th><th scope="col">Location</th><th scope="col">Power</th><th scope="col">Temperature</th><th scope="col">Risk</th><th scope="col">Connection</th><th scope="col">Action</th></tr></thead><tbody id="authorityClinicBody"><tr><td colspan="7" class="empty-cell">Authority data loads after sign-in.</td></tr></tbody></table></div>
-          <aside id="authorityClinicDetail" class="authority-detail ops-card" hidden aria-live="polite"><div class="section-heading"><div><p class="section-kicker">CLINIC DETAIL</p><h4 id="authorityDetailTitle">Select a clinic</h4></div><button id="authorityCloseDetail" class="btn btn-secondary" type="button">Close</button></div><div id="authorityDetailContent"></div><form id="authorityFollowupForm" class="authority-followup-form" hidden><h4>Send follow-up request</h4><label for="authorityFollowupMessage">Message to clinic</label><textarea id="authorityFollowupMessage" maxlength="2000" rows="3" required placeholder="Request a status update or response"></textarea><button class="btn btn-primary" type="submit">Send simulated request</button><p id="authorityFollowupStatus" role="status"></p></form></aside>
-        </div>
-        <div class="authority-followups ops-card"><div class="section-heading"><div><p class="section-kicker">CENTRAL RESPONSE MONITOR</p><h4>Follow-up requests and responses</h4></div><span id="authorityFollowupCount" class="badge">—</span></div><div id="authorityFollowupList">Loading follow-ups…</div></div>
       </section>
 
       <section class="section-block" aria-labelledby="feederHeading">
