@@ -245,6 +245,14 @@ def test_security_headers_are_present_on_html_and_api_responses(runtime):
             assert response.headers["referrer-policy"] == "no-referrer"
             assert "default-src 'self'" in response.headers["content-security-policy"]
             assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+            assert "unsafe-inline" not in response.headers["content-security-policy"]
+            assert response.headers["x-permitted-cross-domain-policies"] == "none"
+            assert response.headers["x-dns-prefetch-control"] == "off"
+
+
+def test_untrusted_host_is_rejected(runtime):
+    with TestClient(runtime()) as client:
+        assert client.get("/", headers={"host": "attacker.example"}).status_code == 400
 
 
 def test_required_mode_fails_closed(runtime, monkeypatch):

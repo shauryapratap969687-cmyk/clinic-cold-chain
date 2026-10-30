@@ -18,6 +18,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import config
 from .alerts import sync_alerts
@@ -64,7 +65,7 @@ class FeederTelemetryRequest(BaseModel):
 
 class ClinicTelemetryRequest(BaseModel):
     model_config = {"allow_inf_nan": False}
-    clinic_id: str = Field(pattern=r"^CL-(0[1-9]|1[0-9]|20)$")
+    clinic_id: str = Field(pattern=r"^CL-[A-Z0-9][A-Z0-9_-]{0,31}$")
     temperature_c: float = Field(ge=-80, le=100)
     humidity_pct: float = Field(default=65, ge=0, le=100)
     power_on: bool = True
@@ -81,8 +82,26 @@ class FeedbackRequest(BaseModel):
 
 
 class SMSReplyRequest(BaseModel):
-    clinic_id: str = Field(pattern=r"^CL-(0[1-9]|1[0-9]|20)$")
+    clinic_id: str = Field(pattern=r"^CL-[A-Z0-9][A-Z0-9_-]{0,31}$")
     reply: str = Field(min_length=1, max_length=16)
+
+
+class ClinicRegistrationRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    clinic_id: str = Field(pattern=r"^CL-[A-Z0-9][A-Z0-9_-]{0,31}$")
+    name: str = Field(min_length=1, max_length=160)
+    location: str = Field(min_length=1, max_length=160)
+    active: bool = True
+
+
+class FollowupRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class FollowupResponseRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    response: str = Field(min_length=1, max_length=4000)
 
 
 class CodeFlowRequest(BaseModel):
@@ -152,6 +171,55 @@ def _alert_payload(alert: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _is_authority(principal: Principal) -> bool:
+    return principal.role in {"admin", "authority"}
+
+
+def _scoped_state(state: dict[str, Any], principal: Principal) -> dict[str, Any]:
+    """Keep clinic operators restricted to their assigned clinic."""
+    if principal.role != "clinic_operator":
+        return state
+    if not principal.clinic_id:
+        raise HTTPException(status_code=403, detail="Clinic account is not assigned to a clinic")
+    clinics = [row for row in state.get("clinics", []) if row.get("id") == principal.clinic_id]
+    if not clinics:
+        raise HTTPException(status_code=403, detail="Assigned clinic is not registered")
+    result = dict(state)
+    result["clinics"] = clinics
+    result["feeders"] = [row for row in state.get("feeders", []) if row.get("id") == clinics[0].get("feeder_id")]
+    summary = dict(state.get("summary") or {})
+    summary.update({
+        "total_clinics": 1,
+        "powered_clinics": sum(row.get("power_on") is True for row in clinics),
+        "critical_clinics": sum(row.get("risk_level") == "Critical" for row in clinics),
+        "warning_clinics": sum(row.get("risk_level") == "Warning" for row in clinics),
+        "total_feeders": len(result["feeders"]),
+        "active_feeders": sum(row.get("online") is True for row in result["feeders"]),
+    })
+    result["summary"] = summary
+    return result
+
+
+def _authority_rows(state: dict[str, Any], registry: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    live = {str(row["id"]): row for row in state.get("clinics", [])}
+    rows: list[dict[str, Any]] = []
+    for record in registry:
+        current = live.get(record["clinic_id"])
+        row = dict(record)
+        if current:
+            row.update(current)
+            row["location"] = record["location"]
+            row["connection_status"] = "online" if current.get("data_quality") == "ok" else str(current.get("data_quality") or "unknown")
+            row["power_status"] = "online" if current.get("power_on") is True else "offline" if current.get("power_on") is False else "unknown"
+        else:
+            row.update({"id": record["clinic_id"], "risk_level": "Unknown", "data_quality": "missing",
+                        "connection_status": "registered", "power_status": "unknown", "power_on": None,
+                        "temperature_c": None, "temperature_history": []})
+        row["active"] = bool(record["active"])
+        rows.append(row)
+    return rows
+
+
 def create_app() -> FastAPI:
     config.validate()
     runtime_lock = RLock()
@@ -188,6 +256,7 @@ def create_app() -> FastAPI:
     # expose an unauthenticated inventory of operational endpoints.
     app = FastAPI(title="Cold-chain operational prototype", version="2.0.0", lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=config.ALLOWED_HOSTS)
     app.state.simulation = None
     app.state.bundle = None
     app.state.storage = None
@@ -228,7 +297,9 @@ def create_app() -> FastAPI:
             "frame-src 'none'; "
             "form-action 'self'; "
             "script-src 'self'; "
-            "style-src 'self' 'unsafe-inline'; "
+            "script-src-attr 'none'; "
+            "style-src 'self'; "
+            "style-src-attr 'none'; "
             "img-src 'self' data:; "
             "font-src 'self' data:; "
             "connect-src 'self'; "
@@ -238,6 +309,8 @@ def create_app() -> FastAPI:
         )
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+        response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+        response.headers["X-DNS-Prefetch-Control"] = "off"
         response.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api/") else response.headers.get("Cache-Control", "no-cache")
         if forwarded_proto == "https" or config.ENFORCE_HTTPS:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -274,6 +347,7 @@ def create_app() -> FastAPI:
                     app.state.simulation.restore_snapshot(snapshot)
                     app.state.initial_state_recorded = True
             current = app.state.simulation
+            store.sync_clinic_registry(current.state())
             if not app.state.initial_state_recorded:
                 _record_state(store, current.state(), "system", "simulation.startup")
                 app.state.initial_state_recorded = True
@@ -297,6 +371,14 @@ def create_app() -> FastAPI:
     def _state_response(state: dict[str, Any]) -> dict[str, Any]:
         state["status"] = state["telemetry_status"]
         return state
+
+    def _clinic_record(current: Simulation, clinic_id: str) -> dict[str, Any] | None:
+        state = current.state()
+        return next((row for row in state.get("clinics", []) if row.get("id") == clinic_id), None)
+
+    def _require_assigned_clinic(principal: Principal, clinic_id: str) -> None:
+        if principal.role == "clinic_operator" and principal.clinic_id != clinic_id:
+            raise HTTPException(status_code=403, detail="Clinic account can only access its assigned clinic")
 
     def maintenance() -> None:
         with runtime_lock:
@@ -347,7 +429,7 @@ def create_app() -> FastAPI:
         if not user or not valid or user["role"] not in ROLES:
             storage().audit("auth.login", request.username, "auth", {"success": False})
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
-        principal = Principal(str(user["username"]), str(user["role"]), int(user["id"]))
+        principal = Principal(str(user["username"]), str(user["role"]), int(user["id"]), user.get("clinic_id"))
         token = issue_token(principal)
         storage().audit("auth.login", principal.username, "auth", {"success": True, "role": principal.role})
         return {"access_token": token, "token_type": "bearer", "expires_in": config.TOKEN_TTL_SECONDS,
@@ -358,34 +440,36 @@ def create_app() -> FastAPI:
         return principal.as_dict()
 
     @app.get("/api/state")
-    def state(_: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
+    def state(principal: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
         with runtime_lock:
             result = ensure_runtime().state()
             sync_alerts(storage(), result)
-            return _state_response(result)
+            return _state_response(_scoped_state(result, principal))
 
     @app.post("/api/simulate")
     def simulate(request: SimulationRequest, principal: Principal = Depends(current_principal)) -> dict[str, Any]:
         current = ensure_runtime()
         _validate_request(request, current)
-        if request.action in {"trip_feeder", "restore_feeder"} and principal.role not in {"grid_operator", "admin"}:
+        if request.action in {"trip_feeder", "restore_feeder"} and not (_is_authority(principal) or principal.role == "grid_operator"):
             raise HTTPException(status_code=403, detail="Grid operator or admin role required for feeder actions")
-        if request.action in {"local_fault", "restore_clinic", "freeze_clinic"} and principal.role not in {"clinic_operator", "admin"}:
+        if request.action in {"local_fault", "restore_clinic", "freeze_clinic"} and not (_is_authority(principal) or principal.role == "clinic_operator"):
             raise HTTPException(status_code=403, detail="Clinic operator or admin role required for clinic actions")
-        if request.action in {"reset", "advance"} and principal.role not in {"clinic_operator", "grid_operator", "admin"}:
+        if request.action in {"local_fault", "restore_clinic", "freeze_clinic"} and principal.role == "clinic_operator":
+            _require_assigned_clinic(principal, str(request.clinic_id))
+        if request.action in {"reset", "advance"} and not (_is_authority(principal) or principal.role in {"clinic_operator", "grid_operator"}):
             raise HTTPException(status_code=403, detail="Operator or admin role required for simulation changes")
         with runtime_lock:
             if current.external_mode and request.action != "reset":
                 raise HTTPException(status_code=409, detail="External telemetry mode is active; explicitly reset to return to simulation")
             result = current.simulate(request.action, feeder_id=request.feeder_id, clinic_id=request.clinic_id, hours=request.hours)
             _record_state(storage(), result, principal.username, f"simulation.{request.action}")
-            return _state_response(result)
+            return _state_response(_scoped_state(result, principal))
 
     @app.get("/api/priority")
-    def priority(_: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
+    def priority(principal: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
         """Return the simulated v3 urgency ranking and SMS state summary."""
         current = ensure_runtime()
-        state = current.state()
+        state = _scoped_state(current.state(), principal)
         return {
             "timestamp": state["timestamp"],
             "simulated": True,
@@ -407,10 +491,101 @@ def create_app() -> FastAPI:
             ],
         }
 
+    @app.get("/api/authority/summary")
+    def authority_summary(principal: Principal = Depends(require_roles("admin"))) -> dict[str, Any]:
+        """Return system-wide Authority dashboard counts."""
+        current = ensure_runtime()
+        rows = _authority_rows(current.state(), storage().clinic_registry())
+        active = [row for row in rows if row.get("active")]
+        return {
+            "total_clinics": len(rows),
+            "active_clinics": len(active),
+            "warning_clinics": sum(row.get("risk_level") == "Warning" for row in active),
+            "critical_clinics": sum(row.get("risk_level") == "Critical" for row in active),
+            "offline_clinics": sum(row.get("power_status") == "offline" or row.get("connection_status") in {"offline", "missing"} for row in active),
+            "pending_followups": len([row for row in storage().list_followups() if row.get("status") == "pending"]),
+            "simulated": True,
+        }
+
+    @app.get("/api/authority/clinics")
+    def authority_clinics(
+        search: str = Query("", max_length=160),
+        status: str = Query("all", max_length=32),
+        location: str = Query("", max_length=160),
+        risk_level: str = Query("all", max_length=32),
+        principal: Principal = Depends(require_roles("admin")),
+    ) -> dict[str, Any]:
+        current = ensure_runtime()
+        rows = _authority_rows(current.state(), storage().clinic_registry())
+        needle = search.strip().lower()
+        location_needle = location.strip().lower()
+        rows = [row for row in rows if (
+            not needle or needle in str(row.get("id", "")).lower() or needle in str(row.get("name", "")).lower()
+        ) and (
+            not location_needle or location_needle in str(row.get("location", "")).lower()
+        ) and (
+            status == "all" or status.lower() in {str(row.get("power_status", "")).lower(), str(row.get("connection_status", "")).lower()}
+        ) and (
+            risk_level == "all" or str(row.get("risk_level", "")).lower() == risk_level.lower()
+        )]
+        return {"clinics": rows, "total": len(rows), "simulated": True}
+
+    @app.post("/api/authority/clinics")
+    def register_authority_clinic(request: ClinicRegistrationRequest, principal: Principal = Depends(require_roles("admin"))) -> dict[str, Any]:
+        record = storage().register_clinic(request.clinic_id, request.name.strip(), request.location.strip(), request.active)
+        storage().audit("clinic.register", principal.username, request.clinic_id, record)
+        return {"clinic": record, "simulated": True}
+
+    @app.get("/api/authority/clinics/{clinic_id}")
+    def authority_clinic_detail(clinic_id: str, principal: Principal = Depends(require_roles("admin"))) -> dict[str, Any]:
+        current = ensure_runtime()
+        registry = next((row for row in storage().clinic_registry() if row["clinic_id"] == clinic_id), None)
+        if not registry:
+            raise HTTPException(status_code=404, detail="Clinic is not registered")
+        rows = _authority_rows(current.state(), [registry])
+        alerts = [row for row in storage().list_alerts(True) if row.get("entity_id") == clinic_id]
+        return {
+            "clinic": rows[0],
+            "temperature_history": storage().telemetry_history(clinic_id),
+            "forecast": next((row.get("thermal_forecast") for row in current.state().get("clinics", []) if row.get("id") == clinic_id), None),
+            "alerts": [_alert_payload(row) for row in _as_json_rows(alerts)],
+            "followups": storage().list_followups(clinic_id),
+            "simulated": True,
+        }
+
+    @app.get("/api/authority/followups")
+    def authority_followups(principal: Principal = Depends(require_roles("admin"))) -> dict[str, Any]:
+        return {"followups": storage().list_followups(), "simulated": True}
+
+    @app.post("/api/authority/clinics/{clinic_id}/followups")
+    def create_authority_followup(clinic_id: str, request: FollowupRequest, principal: Principal = Depends(require_roles("admin"))) -> dict[str, Any]:
+        if not storage().clinic_registry(clinic_id):
+            raise HTTPException(status_code=404, detail="Clinic is not registered")
+        followup = storage().create_followup(clinic_id, principal.username, request.message.strip())
+        storage().audit("clinic.followup.request", principal.username, clinic_id, {"followup_id": followup["id"]})
+        return {"followup": followup, "simulated": True}
+
+    @app.get("/api/clinic/followups")
+    def clinic_followups(principal: Principal = Depends(require_roles("clinic_operator"))) -> dict[str, Any]:
+        if not principal.clinic_id:
+            raise HTTPException(status_code=403, detail="Clinic account is not assigned to a clinic")
+        return {"followups": storage().list_followups(principal.clinic_id), "simulated": True}
+
+    @app.post("/api/clinic/followups/{followup_id}/respond")
+    def respond_to_followup(followup_id: int, request: FollowupResponseRequest, principal: Principal = Depends(require_roles("clinic_operator"))) -> dict[str, Any]:
+        if not principal.clinic_id:
+            raise HTTPException(status_code=403, detail="Clinic account is not assigned to a clinic")
+        result = storage().respond_followup(followup_id, principal.clinic_id, principal.username, request.response.strip())
+        if not result:
+            raise HTTPException(status_code=404, detail="Pending follow-up not found for this clinic")
+        storage().audit("clinic.followup.response", principal.username, principal.clinic_id, {"followup_id": followup_id})
+        return {"followup": result, "simulated": True}
+
     @app.post("/api/sms/reply")
     def sms_reply(request: SMSReplyRequest, principal: Principal = Depends(require_roles("clinic_operator", "admin"))) -> dict[str, Any]:
         """Apply a simulated YES/NO SMS reply from a clinic worker."""
         current = ensure_runtime()
+        _require_assigned_clinic(principal, request.clinic_id)
         try:
             result = current.reply_sms(request.clinic_id, request.reply)
         except KeyError:
@@ -419,7 +594,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc))
         result["sms_reply_accepted"] = str(request.reply).strip().upper()
         _record_state(storage(), result, principal.username, "sms.reply", {request.clinic_id})
-        return _state_response(result)
+        return _state_response(_scoped_state(result, principal))
 
     @app.get("/api/model")
     def model_info(_: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
@@ -454,18 +629,28 @@ def create_app() -> FastAPI:
 
     @app.post("/api/telemetry/clinic")
     def ingest_clinic(request: ClinicTelemetryRequest, principal: Principal = Depends(require_roles("clinic_operator", "admin"))) -> dict[str, Any]:
+        _require_assigned_clinic(principal, request.clinic_id)
         with runtime_lock:
             current = ensure_runtime()
-            if request.clinic_id not in current.clinics:
-                raise HTTPException(status_code=422, detail="clinic_id must be CL-01 through CL-20")
-            previous = current.clinics[request.clinic_id].get("observed_at") if current.external_mode else None
+            registered = bool(storage().clinic_registry(request.clinic_id))
+            if request.clinic_id not in current.clinics and not registered:
+                raise HTTPException(status_code=422, detail="clinic_id is not registered")
+            if request.clinic_id in current.clinics:
+                previous = current.clinics[request.clinic_id].get("observed_at") if current.external_mode else None
+            else:
+                latest = storage().latest_telemetry(request.clinic_id)
+                previous = latest.get("observed_at") if latest else None
             observed_at = observation_time(request.observed_at, previous)
             payload = {**_dump(request), "observed_at": observed_at}
-            current.ingest_clinic(payload, observed_at)
-            quality = current._quality(observed_at)
+            if request.clinic_id in current.clinics:
+                current.ingest_clinic(payload, observed_at)
+                quality = current._quality(observed_at)
+            else:
+                quality = "ok"
             row_id = storage().record_telemetry(request.source, request.clinic_id, payload, observed_at, quality)
             storage().audit("telemetry.ingest", principal.username, request.clinic_id, payload)
-            _record_state(storage(), current.state(), principal.username, "telemetry.clinic", {request.clinic_id})
+            if request.clinic_id in current.clinics:
+                _record_state(storage(), current.state(), principal.username, "telemetry.clinic", {request.clinic_id})
             return {"accepted": True, "telemetry_id": row_id, "quality": quality, "observed_at": observed_at}
 
     @app.get("/api/weather")
@@ -473,15 +658,24 @@ def create_app() -> FastAPI:
         return get_weather()
 
     @app.get("/api/alerts")
-    def alerts(include_acknowledged: bool = Query(True), include_resolved: bool = Query(True), _: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
+    def alerts(include_acknowledged: bool = Query(True), include_resolved: bool = Query(True), principal: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
         maintenance()
         rows = storage().list_alerts(include_acknowledged)
+        if principal.role == "clinic_operator":
+            if not principal.clinic_id:
+                raise HTTPException(status_code=403, detail="Clinic account is not assigned to a clinic")
+            rows = [row for row in rows if row.get("entity_id") == principal.clinic_id]
         if not include_resolved:
             rows = [row for row in rows if row.get("status") != "resolved"]
         return {"alerts": [_alert_payload(alert) for alert in _as_json_rows(rows)]}
 
     @app.post("/api/alerts/{alert_id}/acknowledge")
     def acknowledge(alert_id: int, principal: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin"))) -> dict[str, Any]:
+        existing = next((row for row in storage().list_alerts(True) if int(row.get("id", 0)) == alert_id), None)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        if principal.role == "clinic_operator" and existing.get("entity_id") != principal.clinic_id:
+            raise HTTPException(status_code=403, detail="Clinic account can only acknowledge its assigned clinic alerts")
         alert = storage().acknowledge_alert(alert_id, principal.username)
         if not alert:
             raise HTTPException(status_code=404, detail="Alert not found")
@@ -493,17 +687,24 @@ def create_app() -> FastAPI:
         return {"entries": _as_json_rows(storage().recent_audit(limit))}
 
     @app.get("/api/monitoring")
-    def monitoring(_: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
+    def monitoring(principal: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
         current_state = ensure_runtime().state()
-        result = storage().monitoring(config.TELEMETRY_STALE_SECONDS)
-        result["stale_sensor_count"] = current_state["stale_sensor_count"]
-        result["stale_feeder_count"] = current_state["stale_feeder_count"]
-        result["current_data_quality"] = {quality: sum(c["data_quality"] == quality for c in current_state["clinics"])
-                                          for quality in ("ok", "missing", "stale")}
+        if principal.role == "clinic_operator" and not principal.clinic_id:
+            raise HTTPException(status_code=403, detail="Clinic account is not assigned to a clinic")
+        result = storage().monitoring(config.TELEMETRY_STALE_SECONDS, principal.clinic_id if principal.role == "clinic_operator" else None)
+        visible_clinics = [c for c in current_state["clinics"] if principal.role != "clinic_operator" or c.get("id") == principal.clinic_id]
+        result["stale_sensor_count"] = sum(c.get("data_quality") != "ok" for c in visible_clinics)
+        result["stale_feeder_count"] = current_state["stale_feeder_count"] if principal.role != "clinic_operator" else 0
+        result["current_data_quality"] = {quality: sum(c["data_quality"] == quality for c in visible_clinics)
+                                           for quality in ("ok", "missing", "stale")}
         return result
 
     @app.post("/api/monitoring/feedback")
     def feedback(request: FeedbackRequest, principal: Principal = Depends(require_roles("clinic_operator", "admin"))) -> dict[str, Any]:
+        if principal.role == "clinic_operator":
+            prediction = storage().prediction_by_id(request.prediction_id)
+            if not prediction or prediction.get("clinic_id") != principal.clinic_id:
+                raise HTTPException(status_code=403, detail="Clinic account can only record outcomes for its assigned clinic")
         try:
             result = storage().add_feedback(request.prediction_id, request.actual_outcome, request.notes)
         except ValueError as exc:
@@ -512,8 +713,13 @@ def create_app() -> FastAPI:
         return result
 
     @app.get("/api/events")
-    def events(limit: int = Query(100, ge=1, le=500), _: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
-        return {"events": _as_json_rows(storage().recent_events(limit))}
+    def events(limit: int = Query(100, ge=1, le=500), principal: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
+        rows = _as_json_rows(storage().recent_events(limit))
+        if principal.role == "clinic_operator":
+            if not principal.clinic_id:
+                raise HTTPException(status_code=403, detail="Clinic account is not assigned to a clinic")
+            rows = [row for row in rows if principal.clinic_id in json.dumps(row.get("payload", {}), default=str) or row.get("actor") == principal.username]
+        return {"events": rows}
 
     @app.get("/api/policy")
     def policy(_: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
@@ -524,9 +730,10 @@ def create_app() -> FastAPI:
                                                "SIMULATED Newton-law thermal forecasts show a countdown only when the mean trajectory crosses a configured limit"],
                 "missing_data": "Missing or stale clinic telemetry is Unknown and creates no fresh prediction. External telemetry switches the whole runtime into external mode; simulation changes require an explicit reset. External observations use rules only; historical simulation weather is not a live model input.",
                 "retention": "SQLite retains operational telemetry, alerts, events, audit entries, predictions, and feedback until an operator-managed database retention policy removes them",
-                "roles": {"clinic_operator": "clinic telemetry, clinic controls, feedback, read operations",
-                          "grid_operator": "feeder telemetry and feeder controls, read operations",
-                          "admin": "all operations and audit access", "auditor": "read-only state, monitoring, alerts, audit, and events"},
+                 "roles": {"clinic_operator": "assigned-clinic telemetry, controls, feedback, and read access",
+                           "grid_operator": "feeder telemetry and feeder controls, read operations",
+                           "admin": "all operations and audit access", "authority": "system-wide clinic registry, monitoring, alerts, follow-ups, and permitted administration",
+                           "auditor": "read-only state, monitoring, alerts, audit, and events"},
                 "auth_mode": config.AUTH_MODE, "validation_status": "not_validated",
                 "thermal_forecast": "SIMULATED only; held-out synthetic validation reports temperature error and threshold-crossing error. No real-sensor or vaccine-stability claim is made.",
                 "authentication": "Demo is a no-security local bypass. Required mode uses bearer authentication; local login throttling is process-local.",

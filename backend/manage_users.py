@@ -10,7 +10,8 @@ def main() -> None:
     commands = parser.add_subparsers(dest="action", required=True)
     create = commands.add_parser("create")
     create.add_argument("username")
-    create.add_argument("--role", required=True, choices=["admin", "clinic_operator", "grid_operator", "auditor"])
+    create.add_argument("--role", required=True, choices=["admin", "authority", "clinic_operator", "grid_operator", "auditor"])
+    create.add_argument("--clinic-id", help="Assigned clinic ID; required for clinic_operator users")
     disable = commands.add_parser("disable")
     disable.add_argument("username")
     args = parser.parse_args()
@@ -35,8 +36,8 @@ def main() -> None:
             parser.error("Passwords did not match")
         try:
             with store._connect() as db:
-                db.execute("INSERT INTO users(username,password_hash,role,active,created_at) VALUES(?,?,?,1,?)",
-                           (username, hash_password(password), args.role, utc_now()))
+                db.execute("INSERT INTO users(username,password_hash,role,clinic_id,active,created_at) VALUES(?,?,?, ?,1,?)",
+                           (username, hash_password(password), args.role, args.clinic_id, utc_now()))
         except sqlite3.IntegrityError:
             parser.error("Username already exists; no account was overwritten")
         store.audit("user.create", "local-admin-cli", username, {"role": args.role})

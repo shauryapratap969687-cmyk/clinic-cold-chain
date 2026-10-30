@@ -24,6 +24,7 @@ AUTH_MODE = env("COLDCHAIN_AUTH_MODE", "demo").lower()
 ENFORCE_HTTPS = env("COLDCHAIN_ENFORCE_HTTPS", "false").lower() in {"1", "true", "yes", "on"}
 API_RATE_LIMIT_PER_MINUTE = int(env("COLDCHAIN_API_RATE_LIMIT_PER_MINUTE", "300"))
 BOOTSTRAP_SYNC = env("COLDCHAIN_BOOTSTRAP_SYNC", "false").lower() in {"1", "true", "yes", "on"}
+ALLOWED_HOSTS = [item.strip() for item in env("COLDCHAIN_ALLOWED_HOSTS", "clinic-cold-chain.onrender.com,localhost,127.0.0.1,testserver").split(",") if item.strip()]
 _EPHEMERAL_SECRET = secrets.token_urlsafe(48)
 SECRET_KEY = env("COLDCHAIN_SECRET_KEY", _EPHEMERAL_SECRET if AUTH_MODE == "demo" else "")
 DB_PATH = Path(env("COLDCHAIN_DB_PATH", str(BASE_DIR / "data" / "coldchain.db")))
@@ -51,8 +52,10 @@ def validate() -> None:
     """Fail before serving; configuration remains monkeypatchable in tests."""
     if AUTH_MODE not in {"demo", "required"}:
         raise ValueError("COLDCHAIN_AUTH_MODE must be demo or required")
-    if DEMO_ROLE not in {"admin", "grid_operator", "clinic_operator", "auditor"}:
+    if DEMO_ROLE not in {"admin", "authority", "grid_operator", "clinic_operator", "auditor"}:
         raise ValueError("COLDCHAIN_DEMO_ROLE is invalid")
+    if not ALLOWED_HOSTS:
+        raise ValueError("COLDCHAIN_ALLOWED_HOSTS must contain at least one host")
     if AUTH_MODE == "required":
         if not DEMO_USERNAME or DEMO_USERNAME == "demo-operator":
             raise ValueError("Required mode needs an explicit COLDCHAIN_DEMO_USERNAME (not the demo identity)")

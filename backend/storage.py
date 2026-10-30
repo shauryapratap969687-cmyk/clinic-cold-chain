@@ -43,9 +43,20 @@ class Storage:
                 """
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL, role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
+                    password_hash TEXT NOT NULL, role TEXT NOT NULL, clinic_id TEXT,
+                    active INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS clinics (
+                    clinic_id TEXT PRIMARY KEY, name TEXT NOT NULL, location TEXT NOT NULL DEFAULT 'Unassigned',
+                    active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS followups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, clinic_id TEXT NOT NULL,
+                    requested_by TEXT NOT NULL, message TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+                    response TEXT, responded_by TEXT, created_at TEXT NOT NULL, responded_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_followups_clinic ON followups(clinic_id, id DESC);
                 CREATE TABLE IF NOT EXISTS telemetry (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, entity_id TEXT NOT NULL,
                     observed_at TEXT NOT NULL, payload_json TEXT NOT NULL, quality TEXT NOT NULL DEFAULT 'ok',
@@ -90,6 +101,9 @@ class Storage:
                 if name not in columns:
                     db.execute(f"ALTER TABLE alerts ADD COLUMN {name} {declaration}")
             db.execute("UPDATE alerts SET opened_at=updated_at WHERE opened_at IS NULL")
+            user_columns = {row[1] for row in db.execute("PRAGMA table_info(users)")}
+            if "clinic_id" not in user_columns:
+                db.execute("ALTER TABLE users ADD COLUMN clinic_id TEXT")
             db.commit()
             if any(row[1] == "probability" and row[3] for row in db.execute("PRAGMA table_info(predictions)")):
                 db.executescript("""
@@ -124,9 +138,73 @@ class Storage:
                            (hash_password(password), role, existing[0]))
             return
         db.execute(
-            """INSERT OR IGNORE INTO users(username,password_hash,role,active,created_at) VALUES(?,?,?,?,?)""",
-            (username, hash_password(password), role, 1, utc_now()),
+            """INSERT OR IGNORE INTO users(username,password_hash,role,clinic_id,active,created_at) VALUES(?,?,?,?,?,?)""",
+            (username, hash_password(password), role, None, 1, utc_now()),
         )
+
+    def sync_clinic_registry(self, state: dict[str, Any]) -> None:
+        now = utc_now()
+        rows = state.get("clinics", [])
+        with self._lock, self._connect() as db:
+            for clinic in rows:
+                clinic_id = str(clinic["id"])
+                db.execute(
+                    """INSERT INTO clinics(clinic_id,name,location,active,created_at,updated_at)
+                       VALUES(?,?,?,1,?,?) ON CONFLICT(clinic_id) DO UPDATE SET
+                       name=excluded.name, updated_at=excluded.updated_at""",
+                    (clinic_id, str(clinic.get("name") or clinic_id), str(clinic.get("location") or "Simulated network"), now, now),
+                )
+
+    def register_clinic(self, clinic_id: str, name: str, location: str, active: bool = True) -> dict[str, Any]:
+        now = utc_now()
+        with self._lock, self._connect() as db:
+            db.execute(
+                """INSERT INTO clinics(clinic_id,name,location,active,created_at,updated_at) VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(clinic_id) DO UPDATE SET name=excluded.name, location=excluded.location,
+                   active=excluded.active, updated_at=excluded.updated_at""",
+                (clinic_id, name, location, int(active), now, now),
+            )
+            row = db.execute("SELECT * FROM clinics WHERE clinic_id=?", (clinic_id,)).fetchone()
+            return dict(row)
+
+    def clinic_registry(self, clinic_id: str | None = None, active_only: bool = False) -> list[dict[str, Any]]:
+        query = "SELECT * FROM clinics"
+        params: list[Any] = []
+        conditions = []
+        if clinic_id:
+            conditions.append("clinic_id=?"); params.append(clinic_id)
+        if active_only:
+            conditions.append("active=1")
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY clinic_id"
+        with self._lock, self._connect() as db:
+            return [dict(row) for row in db.execute(query, params)]
+
+    def create_followup(self, clinic_id: str, requested_by: str, message: str) -> dict[str, Any]:
+        with self._lock, self._connect() as db:
+            cursor = db.execute(
+                "INSERT INTO followups(clinic_id,requested_by,message,status,created_at) VALUES(?,?,?,'pending',?)",
+                (clinic_id, requested_by, message, utc_now()),
+            )
+            row = db.execute("SELECT * FROM followups WHERE id=?", (cursor.lastrowid,)).fetchone()
+            return dict(row)
+
+    def list_followups(self, clinic_id: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        query = "SELECT * FROM followups"; params: list[Any] = []
+        if clinic_id:
+            query += " WHERE clinic_id=?"; params.append(clinic_id)
+        query += " ORDER BY id DESC LIMIT ?"; params.append(min(limit, 500))
+        with self._lock, self._connect() as db:
+            return [dict(row) for row in db.execute(query, params)]
+
+    def respond_followup(self, followup_id: int, clinic_id: str, actor: str, response: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as db:
+            db.execute("""UPDATE followups SET status='responded',response=?,responded_by=?,responded_at=?
+                         WHERE id=? AND clinic_id=? AND status='pending'""",
+                       (response, actor, utc_now(), followup_id, clinic_id))
+            row = db.execute("SELECT * FROM followups WHERE id=? AND clinic_id=?", (followup_id, clinic_id)).fetchone()
+            return dict(row) if row else None
 
     def user_by_username(self, username: str) -> dict[str, Any] | None:
         with self._lock, self._connect() as db:
@@ -243,6 +321,11 @@ class Storage:
                                (prediction_id, int(actual_outcome), notes, utc_now()))
             return {"id": int(cursor.lastrowid), "prediction_id": prediction_id, "actual_outcome": bool(actual_outcome), "notes": notes}
 
+    def prediction_by_id(self, prediction_id: int) -> dict[str, Any] | None:
+        with self._lock, self._connect() as db:
+            row = db.execute("SELECT * FROM predictions WHERE id=?", (prediction_id,)).fetchone()
+            return dict(row) if row else None
+
     def save_snapshot(self, payload: dict[str, Any]) -> None:
         with self._lock, self._connect() as db:
             db.execute("INSERT INTO runtime_snapshot(id,payload_json,updated_at) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json,updated_at=excluded.updated_at",
@@ -257,18 +340,23 @@ class Storage:
         with self._lock, self._connect() as db:
             return [dict(row) for row in db.execute("SELECT * FROM events ORDER BY id DESC LIMIT ?", (min(limit, 500),))]
 
-    def monitoring(self, stale_seconds: int) -> dict[str, Any]:
+    def monitoring(self, stale_seconds: int, clinic_id: str | None = None) -> dict[str, Any]:
         with self._lock, self._connect() as db:
-            prediction_count = int(db.execute("SELECT COUNT(*) FROM predictions").fetchone()[0])
-            feedback_count = int(db.execute("SELECT COUNT(*) FROM feedback").fetchone()[0])
-            rows = db.execute("SELECT observed_at,quality FROM telemetry ORDER BY id DESC LIMIT 1000").fetchall()
+            prediction_where = " WHERE clinic_id=?" if clinic_id else ""
+            prediction_params = (clinic_id,) if clinic_id else ()
+            prediction_count = int(db.execute(f"SELECT COUNT(*) FROM predictions{prediction_where}", prediction_params).fetchone()[0])
+            feedback_query = "SELECT COUNT(*) FROM feedback f JOIN predictions p ON p.id=f.prediction_id" + (" WHERE p.clinic_id=?" if clinic_id else "")
+            feedback_count = int(db.execute(feedback_query, prediction_params).fetchone()[0])
+            telemetry_query = "SELECT observed_at,quality FROM telemetry" + (" WHERE entity_id=?" if clinic_id else "") + " ORDER BY id DESC LIMIT 1000"
+            rows = db.execute(telemetry_query, prediction_params).fetchall()
             quality = {"ok": 0, "degraded": 0, "invalid": 0}
             for row in rows:
                 quality[str(row[1])] = quality.get(str(row[1]), 0) + 1
-            recent = [dict(row) for row in db.execute("SELECT * FROM predictions ORDER BY id DESC LIMIT 1000")]
+            recent = [dict(row) for row in db.execute("SELECT * FROM predictions" + prediction_where + " ORDER BY id DESC LIMIT 1000", prediction_params)]
             distribution = {level: sum(row["risk_level"] == level for row in recent) for level in ("Safe", "Warning", "Critical", "Unknown")}
-            labeled = [dict(row) for row in db.execute("""SELECT p.*,f.actual_outcome FROM predictions p JOIN feedback f ON p.id=f.prediction_id
-                WHERE f.id=(SELECT MIN(f2.id) FROM feedback f2 WHERE f2.prediction_id=p.id) ORDER BY p.id DESC LIMIT 1000""")]
+            labeled_query = """SELECT p.*,f.actual_outcome FROM predictions p JOIN feedback f ON p.id=f.prediction_id
+                WHERE f.id=(SELECT MIN(f2.id) FROM feedback f2 WHERE f2.prediction_id=p.id)""" + (" AND p.clinic_id=?" if clinic_id else "") + " ORDER BY p.id DESC LIMIT 1000"
+            labeled = [dict(row) for row in db.execute(labeled_query, prediction_params)]
             tp = sum(row["risk_level"] == "Critical" and row["actual_outcome"] == 1 for row in labeled)
             fp = sum(row["risk_level"] == "Critical" and row["actual_outcome"] == 0 for row in labeled)
             fn = sum(row["risk_level"] != "Critical" and row["actual_outcome"] == 1 for row in labeled)
@@ -282,7 +370,7 @@ class Storage:
                            "brier": sum((row["probability"] - row["actual_outcome"]) ** 2 for row in calibrated) / len(calibrated) if calibrated else None,
                            "probability_labeled_count": len(calibrated), "confusion_matrix": [[tn, fp], [fn, tp]] if labeled else None,
                            "limitation": "Operator-reported six-hour outcomes; Critical is the positive alarm class. Not independent clinical validation."}
-            baseline = db.execute("SELECT risk_level FROM predictions ORDER BY id LIMIT 200").fetchall()
+            baseline = db.execute("SELECT risk_level FROM predictions" + prediction_where + " ORDER BY id LIMIT 200", prediction_params).fetchall()
             baseline_rate = sum(row[0] == "Critical" for row in baseline) / len(baseline) if baseline else None
             recent_rate = distribution["Critical"] / len(recent) if recent else None
             drift = {"method": "critical_risk_rate_shift", "baseline_count": len(baseline), "recent_count": len(recent),
@@ -297,6 +385,18 @@ class Storage:
         with self._lock, self._connect() as db:
             row = db.execute("SELECT * FROM telemetry WHERE entity_id=? ORDER BY id DESC LIMIT 1", (entity_id,)).fetchone()
             return dict(row) if row else None
+
+    def telemetry_history(self, entity_id: str, limit: int = 200) -> list[dict[str, Any]]:
+        with self._lock, self._connect() as db:
+            rows = [dict(row) for row in db.execute(
+                "SELECT * FROM telemetry WHERE entity_id=? ORDER BY id DESC LIMIT ?", (entity_id, min(limit, 500))
+            )]
+        for row in rows:
+            try:
+                row["payload"] = json.loads(row.pop("payload_json"))
+            except (TypeError, json.JSONDecodeError):
+                row.pop("payload_json", None)
+        return rows
 
     def stale_sensor_count(self, stale_seconds: int) -> int:
         now = datetime.now(timezone.utc)

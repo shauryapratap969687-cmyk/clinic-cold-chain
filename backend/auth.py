@@ -21,7 +21,7 @@ try:
 except ImportError:  # local minimal environments can still verify legacy records
     bcrypt = None
 
-ROLES = {"clinic_operator", "grid_operator", "admin", "auditor"}
+ROLES = {"clinic_operator", "grid_operator", "admin", "authority", "auditor"}
 _bearer = HTTPBearer(auto_error=False)
 
 
@@ -30,9 +30,10 @@ class Principal:
     username: str
     role: str
     user_id: int | None = None
+    clinic_id: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {"username": self.username, "role": self.role, "user_id": self.user_id}
+        return {"username": self.username, "role": self.role, "user_id": self.user_id, "clinic_id": self.clinic_id}
 
 
 def hash_password(password: str, iterations: int = 310_000) -> str:
@@ -69,7 +70,7 @@ def _unb64(value: str) -> bytes:
 def issue_token(principal: Principal) -> str:
     now = int(time.time())
     header = {"alg": "HS256", "typ": "JWT"}
-    payload = {"sub": principal.username, "role": principal.role, "uid": principal.user_id, "iat": now,
+    payload = {"sub": principal.username, "role": principal.role, "uid": principal.user_id, "cid": principal.clinic_id, "iat": now,
                "exp": now + config.TOKEN_TTL_SECONDS}
     encoded_header = _b64(json.dumps(header, separators=(",", ":")).encode())
     encoded_payload = _b64(json.dumps(payload, separators=(",", ":")).encode())
@@ -96,7 +97,8 @@ def decode_token(token: str) -> Principal:
         role = str(payload["role"])
         if role not in ROLES:
             raise ValueError("unknown role")
-        return Principal(username=str(payload["sub"]), role=role, user_id=payload.get("uid"))
+        clinic_id = payload.get("cid")
+        return Principal(username=str(payload["sub"]), role=role, user_id=payload.get("uid"), clinic_id=str(clinic_id) if clinic_id else None)
     except (ValueError, KeyError, TypeError, OverflowError, json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired bearer token")
 
@@ -105,7 +107,7 @@ def current_principal(request: Request, credentials: HTTPAuthorizationCredential
     if credentials is None:
         if config.AUTH_MODE == "demo":
             role = config.DEMO_ROLE if config.DEMO_ROLE in ROLES else "clinic_operator"
-            return Principal(config.DEMO_USERNAME, role)
+            return Principal(config.DEMO_USERNAME, role, clinic_id=None)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
     principal = decode_token(credentials.credentials)
     store = request.app.state.get_storage()
@@ -113,7 +115,7 @@ def current_principal(request: Request, credentials: HTTPAuthorizationCredential
     if (not user or user["id"] != principal.user_id or user["role"] not in ROLES
             or (config.AUTH_MODE == "required" and principal.username == "demo-operator")):
         raise HTTPException(status_code=401, detail="User is inactive or unavailable")
-    return Principal(user["username"], user["role"], user["id"])
+    return Principal(user["username"], user["role"], user["id"], user.get("clinic_id"))
 
 
 def require_roles(*roles: str) -> Callable[..., Principal]:
@@ -122,7 +124,7 @@ def require_roles(*roles: str) -> Callable[..., Principal]:
         raise ValueError(f"unsupported role in policy: {allowed - ROLES}")
 
     def dependency(principal: Principal = Depends(current_principal)) -> Principal:
-        if principal.role not in allowed:
+        if principal.role not in allowed and not (principal.role == "authority" and "admin" in allowed):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Role is not permitted for this operation")
         return principal
 

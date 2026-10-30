@@ -33,17 +33,20 @@ to assigned clinics**. Do not deploy to independent tenants without that work.
 
 | Role | Reads | Writes |
 |---|---|---|
-| clinic_operator | State, model, alerts, monitoring, weather, events, policy | Clinic telemetry/scenarios, time/reset, acknowledgement, outcomes |
+| clinic_operator | Assigned clinic state, model, alerts, monitoring, weather, events, policy, follow-ups | Assigned clinic telemetry/scenarios, time/reset, acknowledgement, outcomes |
 | grid_operator | Same operational reads | Feeder telemetry/scenarios, time/reset, acknowledgement |
-| admin | All, including audit | All operational writes |
+| admin | All, including audit and Authority dashboard | All operational writes |
+| authority | All registered clinics, registry, details, alerts, follow-ups, responses, and audit | Permitted system-wide administrative actions |
 | auditor | All, including audit | None |
 
-An existing user's password/role is not reset on restart. This prototype has no
+An existing user's password/role is not reset on restart. Clinic operators should
+be provisioned with a `clinic_id` assignment so the backend can enforce their
+scope. This prototype has no
 account-management API. Use the local administrative CLI for explicit user
 provisioning/disable operations; keep that terminal and database private:
 
 ```powershell
-.venv\Scripts\python.exe -m backend.manage_users create alice --role clinic_operator
+.venv\Scripts\python.exe -m backend.manage_users create alice --role clinic_operator --clinic-id CL-01
 .venv\Scripts\python.exe -m backend.manage_users disable alice
 ```
 

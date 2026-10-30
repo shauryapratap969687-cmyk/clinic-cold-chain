@@ -2,12 +2,13 @@
   'use strict';
 
   const state = { live: null, model: null, busy: false, generation: 0, pollTimer: null, fullPollTimer: null, token: null, user: null, config: null, active: false, reading: false, reads: new Set(), expiryTimer: null, recovery: false, panels: {}, received: null, stateStale: false, soundEnabled: false, userMuted: false, audioError: null, audioContext: null, audioResumePromise: null, alarmStatus: 'Unknown', alarmPlaybackTimer: null, alarmPlaybackToken: 0, alarmPlaybackActive: false, alarmPlaybackStarting: false, alarmNodes: new Set() };
+  let authorityClinics = []; let authorityClinicId = null;
   const $ = (id) => document.getElementById(id);
   const els = {
     loading: $('loadingState'), error: $('globalError'), errorTitle: $('errorTitle'), errorMessage: $('errorMessage'),
     simClock: $('simClock'), horizon: $('horizonValue'), lastSync: $('lastSync'), feederGrid: $('feederGrid'),
     feederSelect: $('feederSelect'), clinicSelect: $('clinicSelect'), feederFilter: $('feederFilter'), riskFilter: $('riskFilter'), search: $('clinicSearch'),
-    tableBody: $('clinicTableBody'), tableSummary: $('tableSummary'), modelStatus: $('modelStatus'), modelUnavailable: $('modelUnavailable'), modelContent: $('modelContent'), thermalForecastValidation: $('thermalForecastValidation'), thermalValidationText: $('thermalValidationText'), powerCutForecastPanel: $('powerCutForecast'), powerCutForecastStatus: $('powerCutForecastStatus'), powerCutForecastClinic: $('powerCutForecastClinic'), powerCutCurrentTemp: $('powerCutCurrentTemp'), powerCutAmbientTemp: $('powerCutAmbientTemp'), powerCutSafeRange: $('powerCutSafeRange'), powerCutLimit: $('powerCutLimit'), powerCutAfter1h: $('powerCutAfter1h'), powerCutAfter2h: $('powerCutAfter2h'), powerCutAfter6h: $('powerCutAfter6h'), powerCutTimeToLimit: $('powerCutTimeToLimit'), powerCutForecastNote: $('powerCutForecastNote'), powerCutChart: $('powerCutForecastChart'), powerCutChartNote: $('powerCutChartNote'), temperatureAlarmPanel: $('temperatureAlarmPanel'), temperatureAlarmStatus: $('temperatureAlarmStatus'), temperatureAlarmThreshold: $('temperatureAlarmThreshold'), temperatureAlarmCount: $('temperatureAlarmCount'), temperatureAlarmCountLabel: $('temperatureAlarmCountLabel'), temperatureAlarmLastRefresh: $('temperatureAlarmLastRefresh'), alarmSoundButton: $('alarmSoundButton'), alarmSoundStatus: $('alarmSoundStatus')
+    tableBody: $('clinicTableBody'), tableSummary: $('tableSummary'), modelStatus: $('modelStatus'), modelUnavailable: $('modelUnavailable'), modelContent: $('modelContent'), thermalForecastValidation: $('thermalForecastValidation'), thermalValidationText: $('thermalValidationText'), powerCutForecastPanel: $('powerCutForecast'), powerCutForecastStatus: $('powerCutForecastStatus'), powerCutForecastClinic: $('powerCutForecastClinic'), powerCutCurrentTemp: $('powerCutCurrentTemp'), powerCutAmbientTemp: $('powerCutAmbientTemp'), powerCutSafeRange: $('powerCutSafeRange'), powerCutLimit: $('powerCutLimit'), powerCutAfter1h: $('powerCutAfter1h'), powerCutAfter2h: $('powerCutAfter2h'), powerCutAfter6h: $('powerCutAfter6h'), powerCutTimeToLimit: $('powerCutTimeToLimit'), powerCutForecastNote: $('powerCutForecastNote'), powerCutChart: $('powerCutForecastChart'), powerCutChartNote: $('powerCutChartNote'), temperatureAlarmPanel: $('temperatureAlarmPanel'), temperatureAlarmStatus: $('temperatureAlarmStatus'), temperatureAlarmThreshold: $('temperatureAlarmThreshold'), temperatureAlarmCount: $('temperatureAlarmCount'), temperatureAlarmCountLabel: $('temperatureAlarmCountLabel'), temperatureAlarmLastRefresh: $('temperatureAlarmLastRefresh'), alarmSoundButton: $('alarmSoundButton'), alarmSoundStatus: $('alarmSoundStatus'), authoritySection: $('authoritySection'), authorityNav: $('authorityNav'), authorityClinicBody: $('authorityClinicBody'), authorityClinicDetail: $('authorityClinicDetail'), authorityDetailTitle: $('authorityDetailTitle'), authorityDetailContent: $('authorityDetailContent'), authorityFollowupForm: $('authorityFollowupForm'), authorityFollowupMessage: $('authorityFollowupMessage'), authorityFollowupStatus: $('authorityFollowupStatus'), authorityFollowupList: $('authorityFollowupList')
   };
 
   function escapeHtml(value) {
@@ -39,7 +40,8 @@
   const finite = (value) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
   const text = (value) => value == null ? 'Unavailable' : typeof value === 'object' ? JSON.stringify(value) : String(value);
   const role = () => state.user && state.user.role;
-  const permitted = (kind) => ({ feeder: ['admin', 'grid_operator'], clinic: ['admin', 'clinic_operator'], feedback: ['admin', 'clinic_operator'], audit: ['admin', 'auditor'], write: ['admin', 'clinic_operator', 'grid_operator'] }[kind] || []).includes(role());
+  const permitted = (kind) => ({ feeder: ['admin', 'authority', 'grid_operator'], clinic: ['admin', 'authority', 'clinic_operator'], feedback: ['admin', 'authority', 'clinic_operator'], audit: ['admin', 'authority', 'auditor'], write: ['admin', 'authority', 'clinic_operator', 'grid_operator'] }[kind] || []).includes(role());
+  const authorityEnabled = () => ['admin', 'authority'].includes(role());
   const riskClass = (value) => ({ safe: 'safe', healthy: 'safe', critical: 'critical', high: 'critical', warning: 'warning', medium: 'warning', low: 'safe' }[String(value).toLowerCase()] || 'unknown');
   const SMS_STATE_LABELS = { normal: 'Normal', critical_no_sms: 'Critical · no backup', critical_unconfirmed: 'Critical · awaiting reply', needs_help: 'Needs help', backup_in_use: 'Backup in use', backup_exhausted: 'Backup exhausted' };
   const SMS_STATE_CLASSES = { normal: 'safe', critical_no_sms: 'critical', critical_unconfirmed: 'warning', needs_help: 'critical', backup_in_use: 'safe', backup_exhausted: 'critical' };
@@ -543,7 +545,7 @@
     $('modelName').textContent = data.model_name || '—'; $('modelHorizon').textContent = data.horizon_hours == null ? '—' : `${data.horizon_hours} hours`; $('datasetInfo').textContent = dataset.days == null ? '—' : `${dataset.days} days · ${dataset.rows || 0} rows`; $('positiveRate').textContent = percent(dataset.positive_rate);
     $('prAuc').textContent = formatNumber(metrics.pr_auc, 3); $('f2Score').textContent = formatNumber(metrics.f2, 3); $('brierScore').textContent = formatNumber(metrics.brier, 3); $('rocAuc').textContent = formatNumber(metrics.roc_auc, 3); $('threshold').textContent = percent(metrics.threshold, 1); $('prevalence').textContent = percent(metrics.prevalence, 1);
     const matrix = data.confusion_matrix || [[null, null], [null, null]]; $('matrixTn').textContent = matrix[0] && matrix[0][0] != null ? matrix[0][0] : '—'; $('matrixFp').textContent = matrix[0] && matrix[0][1] != null ? matrix[0][1] : '—'; $('matrixFn').textContent = matrix[1] && matrix[1][0] != null ? matrix[1][0] : '—'; $('matrixTp').textContent = matrix[1] && matrix[1][1] != null ? matrix[1][1] : '—';
-    const importance = Array.isArray(data.feature_importance) ? data.feature_importance.slice().sort((a, b) => (Number(b.importance) || 0) - (Number(a.importance) || 0)) : []; const maxImportance = Math.max(...importance.map((item) => finite(item.importance) ? Number(item.importance) : 0), 0); $('featureImportance').innerHTML = importance.length ? importance.map((item) => `<div class="importance-row"><span class="importance-label" title="${escapeHtml(item.feature)}">${escapeHtml(item.feature)}</span><span class="importance-bar"><span style="width:${maxImportance && finite(item.importance) ? Math.max(0, Math.min(100, Number(item.importance) / maxImportance * 100)) : 0}%"></span></span><span class="importance-value">${formatNumber(item.importance, 3)}</span></div>`).join('') : '<div class="empty-state">No feature importance data returned.</div>';
+    const importance = Array.isArray(data.feature_importance) ? data.feature_importance.slice().sort((a, b) => (Number(b.importance) || 0) - (Number(a.importance) || 0)) : []; const maxImportance = Math.max(...importance.map((item) => finite(item.importance) ? Number(item.importance) : 0), 0); const importanceBucket = (item) => maxImportance && finite(item.importance) ? Math.max(0, Math.min(10, Math.round(Number(item.importance) / maxImportance * 10))) : 0; $('featureImportance').innerHTML = importance.length ? importance.map((item) => `<div class="importance-row"><span class="importance-label" title="${escapeHtml(item.feature)}">${escapeHtml(item.feature)}</span><span class="importance-bar"><span class="importance-fill importance-fill-${importanceBucket(item)}"></span></span><span class="importance-value">${formatNumber(item.importance, 3)}</span></div>`).join('') : '<div class="empty-state">No feature importance data returned.</div>';
     const notes = Array.isArray(data.notes) ? data.notes : []; const notesWrap = $('modelNotes'); notesWrap.hidden = !notes.length; if (notes.length) notesWrap.querySelector('ul').innerHTML = notes.map((note) => `<li>${escapeHtml(note)}</li>`).join('');
     drawChart($('reliabilityChart'), data.calibration, '#38d6c3', 'Reliability curve: observed outcome versus predicted probability'); drawChart($('rocChart'), data.roc_curve, '#f5a35b', 'ROC curve: true positive rate versus false positive rate');
   }
@@ -596,6 +598,47 @@
     if (!Array.isArray(data.entries)) throw new Error('Audit response is missing its entries.');
     $('auditContent').innerHTML = data.entries.length ? data.entries.map((entry) => `<article class="audit-entry"><strong>${escapeHtml(text(entry.action))}</strong><p>${escapeHtml(text(entry.actor))} · ${escapeHtml(text(entry.resource))}</p><p class="muted">#${escapeHtml(text(entry.id))} · ${escapeHtml(localTime(entry.created_at))}</p><pre>${escapeHtml(text(entry.detail))}</pre></article>`).join('') : '<p>No audit entries returned.</p>';
   }
+  function renderAuthoritySummary(data) {
+    [['authorityTotalClinics', data.total_clinics], ['authorityActiveClinics', data.active_clinics], ['authorityWarningClinics', data.warning_clinics], ['authorityCriticalClinics', data.critical_clinics], ['authorityOfflineClinics', data.offline_clinics]].forEach(([id, value]) => { if ($(id)) $(id).textContent = formatNumber(value, 0); });
+  }
+  function authorityStatusMarkup(row) {
+    const power = String(row.power_status || 'unknown'); const connection = String(row.connection_status || 'unknown');
+    return `<span class="authority-status-${escapeHtml(power === 'offline' ? 'offline' : connection === 'stale' ? 'stale' : connection === 'online' ? 'online' : 'warning')}">${escapeHtml(power.toUpperCase())}</span><small class="power-source">${escapeHtml(connection)} connection</small>`;
+  }
+  function renderAuthorityClinics(data) {
+    authorityClinics = Array.isArray(data.clinics) ? data.clinics : [];
+    if (!els.authorityClinicBody) return;
+    els.authorityClinicBody.innerHTML = authorityClinics.length ? authorityClinics.map((row) => {
+      const id = row.id || row.clinic_id; const risk = row.risk_level || 'Unknown'; const temperature = finite(row.temperature_c) ? `${formatNumber(row.temperature_c, 1)}°C` : '—';
+      return `<tr data-authority-clinic="${escapeHtml(id)}"><td><strong>${escapeHtml(row.name || id)}</strong><small class="clinic-id">${escapeHtml(id)}</small></td><td>${escapeHtml(row.location || 'Unassigned')}</td><td>${authorityStatusMarkup(row)}</td><td>${temperature}</td><td><span class="badge ${riskClass(risk)}">${escapeHtml(risk)}</span></td><td>${escapeHtml(row.connection_status || 'unknown')}</td><td><button type="button" class="btn btn-secondary" data-authority-open="${escapeHtml(id)}">Open</button></td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="empty-cell">No registered clinics match these filters.</td></tr>';
+  }
+  function renderAuthorityFollowups(data) {
+    const rows = Array.isArray(data.followups) ? data.followups : [];
+    if ($('authorityFollowupCount')) $('authorityFollowupCount').textContent = `${rows.filter((row) => row.status === 'pending').length} pending`;
+    if (els.authorityFollowupList) els.authorityFollowupList.innerHTML = rows.length ? rows.map((row) => `<article class="authority-followup-item"><h5>${escapeHtml(row.clinic_id)} · ${escapeHtml(row.status)}</h5><p>${escapeHtml(row.message)}</p><p class="muted">Requested by ${escapeHtml(row.requested_by)} · ${escapeHtml(localTime(row.created_at))}</p>${row.response ? `<div class="followup-response"><b>Response:</b> ${escapeHtml(row.response)}<br><small>${escapeHtml(row.responded_by || '')} · ${escapeHtml(localTime(row.responded_at))}</small></div>` : '<p class="muted">Awaiting clinic response.</p>'}</article>`).join('') : '<p class="muted">No follow-up requests recorded.</p>';
+  }
+  function renderAuthorityDetail(data) {
+    const clinic = data.clinic || {}; const id = clinic.id || clinic.clinic_id; authorityClinicId = id;
+    if (els.authorityClinicDetail) els.authorityClinicDetail.hidden = false;
+    if (els.authorityDetailTitle) els.authorityDetailTitle.textContent = `${clinic.name || id} · ${id}`;
+    if (els.authorityDetailContent) els.authorityDetailContent.innerHTML = `${details([['Location', clinic.location], ['Power status', clinic.power_status], ['Connection', clinic.connection_status], ['Current temperature', finite(clinic.temperature_c) ? `${formatNumber(clinic.temperature_c, 1)}°C` : null], ['Risk level', clinic.risk_level], ['Observed at', localTime(clinic.observed_at)]])}<h5>Temperature history</h5>${details([['Readings', Array.isArray(data.temperature_history) ? data.temperature_history.length : 0], ['Latest telemetry', data.temperature_history && data.temperature_history[0] ? data.temperature_history[0].payload : null]])}<h5>Forecast</h5>${details([['Simulated forecast', data.forecast || 'Unavailable']])}<h5>Alerts</h5>${Array.isArray(data.alerts) && data.alerts.length ? data.alerts.map((item) => `<p><span class="badge ${riskClass(item.severity)}">${escapeHtml(item.severity)}</span> ${escapeHtml(item.message)}</p>`).join('') : '<p class="muted">No clinic alerts.</p>'}`;
+    if (els.authorityFollowupForm) els.authorityFollowupForm.hidden = !authorityEnabled();
+  }
+  async function openAuthorityClinic(clinicId) {
+    const data = await api(`/api/authority/clinics/${encodeURIComponent(clinicId)}`);
+    renderAuthorityDetail(data);
+  }
+  async function loadAuthority(generation) {
+    if (!authorityEnabled() || !state.active) return;
+    const search = encodeURIComponent(($('authoritySearch') && $('authoritySearch').value.trim()) || '');
+    const status = encodeURIComponent(($('authorityStatusFilter') && $('authorityStatusFilter').value) || 'all');
+    const location = encodeURIComponent(($('authorityLocationFilter') && $('authorityLocationFilter').value.trim()) || '');
+    const risk = encodeURIComponent(($('authorityRiskFilter') && $('authorityRiskFilter').value) || 'all');
+    const [summary, clinics, followups] = await Promise.all([api('/api/authority/summary'), api(`/api/authority/clinics?search=${search}&status=${status}&location=${location}&risk_level=${risk}`), api('/api/authority/followups')]);
+    if (generation != null && generation !== state.generation) return;
+    renderAuthoritySummary(summary); renderAuthorityClinics(clinics); renderAuthorityFollowups(followups);
+  }
   const panels = { alerts: renderAlerts, weather: renderWeather, monitoring: renderMonitoring, policy: renderPolicy, audit: renderAudit };
   function toast(message) {
     $('toastRegion').replaceChildren();
@@ -630,16 +673,19 @@
     Object.keys(panels).forEach((name) => { $(`${name}Status`).textContent = 'Waiting for connection…'; $(`${name}Status`).className = 'panel-status'; });
     $('feedbackForm').reset(); $('feedbackForm').hidden = true; $('predictionSelect').replaceChildren(); $('clinicSearch').value = ''; $('riskFilter').value = 'all';
     ['reliabilityChart', 'rocChart'].forEach((id) => { const canvas = $(id); canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height); });
-    $('dashboard').hidden = true; $('sectionNav').hidden = true; $('auditSection').hidden = true;
+    $('dashboard').hidden = true; $('sectionNav').hidden = true; $('auditSection').hidden = true; if (els.authoritySection) els.authoritySection.hidden = true; if (els.authorityNav) els.authorityNav.hidden = true;
+    authorityClinics = []; authorityClinicId = null;
+    if (els.authorityClinicDetail) els.authorityClinicDetail.hidden = true;
+    if ($('authorityRegisterForm')) $('authorityRegisterForm').hidden = true;
     $('authPanel').hidden = false; $('authStatus').textContent = message; $('loginForm').hidden = !state.config; $('loginForm').reset();
     $('demoEnter').hidden = !isDemo(); $('retryAuth').hidden = !!state.config; $('loginButton').disabled = false; $('demoEnter').disabled = false;
     els.loading.hidden = true; hideError(); updateAlarmSoundButton(); setControlsDisabled(false);
   }
   function isDemo() { return state.config && state.config.auth_mode === 'demo' && state.config.demo !== false; }
   function enterSession(user, token, expires) {
-    if (!user || !['clinic_operator', 'grid_operator', 'admin', 'auditor'].includes(user.role)) throw new Error('The server returned an unsupported user role.');
+    if (!user || !['clinic_operator', 'grid_operator', 'admin', 'authority', 'auditor'].includes(user.role)) throw new Error('The server returned an unsupported user role.');
     invalidate(); state.user = user; state.token = token || null; state.active = true; state.recovery = false;
-    $('authPanel').hidden = true; $('dashboard').hidden = false; $('sectionNav').hidden = false;
+    $('authPanel').hidden = true; $('dashboard').hidden = false; $('sectionNav').hidden = false; if (els.authoritySection) els.authoritySection.hidden = !authorityEnabled(); if (els.authorityNav) els.authorityNav.hidden = !authorityEnabled();
     $('sessionIdentity').textContent = token ? `${user.username} · ${user.role}` : 'Local demo · auth bypassed';
     $('optionalSignIn').hidden = !!token || !isDemo(); $('auditSection').hidden = !permitted('audit');
     $('password').value = ''; $('loginButton').disabled = false; $('demoEnter').disabled = false; clearTimeout(state.expiryTimer);
@@ -717,7 +763,7 @@
       if (name !== 'model') { $(`${name}Status`).textContent = `Received ${localTime(state.panels[name])}`; $(`${name}Status`).className = 'panel-status'; }
     }));
     if (generation !== state.generation || !state.active) return;
-    results.forEach((result, index) => {
+     results.forEach((result, index) => {
       if (result.status !== 'rejected') return;
       const name = names[index]; const message = `${state.panels[name] ? `Last known · ${localTime(state.panels[name])}` : 'Unavailable'} · ${result.reason.message}`;
       if (name === 'model') { if (!state.model) renderModel(null); els.modelStatus.textContent = message; els.modelStatus.className = 'model-status not-ready'; }
@@ -725,9 +771,14 @@
         $(`${name}Status`).textContent = message; $(`${name}Status`).className = 'panel-status stale';
         const content = $(name === 'alerts' ? 'alertsList' : `${name}Content`); content.classList.remove('skeleton-block');
         if (!state.panels[name]) content.textContent = 'No current data. Refresh to reconnect.';
-      }
-    });
-    const recoveryIndex = names.indexOf(state.recoveryFor);
+       }
+     });
+     if (authorityEnabled()) {
+       try { await loadAuthority(generation); } catch (error) {
+         if (generation === state.generation && els.authorityClinicBody) els.authorityClinicBody.innerHTML = `<tr><td colspan="7" class="empty-cell">Authority data unavailable: ${escapeHtml(error.message)}</td></tr>`;
+       }
+     }
+     const recoveryIndex = names.indexOf(state.recoveryFor);
     const recovered = stateOk && (recoveryIndex < 0 || results[recoveryIndex].status === 'fulfilled');
     if (manual && recovered) { state.recovery = false; state.recoveryFor = null; hideError(); toast('State refreshed. Review the latest records before another action.'); }
     state.reading = false; els.loading.hidden = true; $('dashboard').setAttribute('aria-busy', 'false'); setControlsDisabled(false); scheduleDashboardPoll(); scheduleFullPoll();
@@ -776,7 +827,16 @@
      if (!button || button.disabled) return;
      sendSmsReply(button.dataset.clinicId, button.dataset.smsReply);
    });
-  els.search.addEventListener('input', () => state.live && renderTable(state.live)); els.riskFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.feederFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.clinicSelect.addEventListener('change', () => state.live && renderPowerCutForecast(state.live)); $('dismissError').addEventListener('click', hideError); els.alarmSoundButton.addEventListener('pointerdown', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('touchstart', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('click', toggleAlarmSound);
+   els.search.addEventListener('input', () => state.live && renderTable(state.live)); els.riskFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.feederFilter.addEventListener('change', () => state.live && renderTable(state.live)); els.clinicSelect.addEventListener('change', () => state.live && renderPowerCutForecast(state.live)); $('dismissError').addEventListener('click', hideError); els.alarmSoundButton.addEventListener('pointerdown', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('touchstart', primeAlarmAudio, { passive: true }); els.alarmSoundButton.addEventListener('click', toggleAlarmSound);
+   ['authoritySearch', 'authorityLocationFilter'].forEach((id) => { if ($(id)) $(id).addEventListener('change', () => loadAuthority(state.generation).catch(() => {})); });
+   ['authorityStatusFilter', 'authorityRiskFilter'].forEach((id) => { if ($(id)) $(id).addEventListener('change', () => loadAuthority(state.generation).catch(() => {})); });
+   if (els.authorityClinicBody) els.authorityClinicBody.addEventListener('click', (event) => { const button = event.target.closest('[data-authority-open]'); if (button) openAuthorityClinic(button.dataset.authorityOpen).catch((error) => showError('Clinic detail unavailable', error.message)); });
+   if ($('authorityRefresh')) $('authorityRefresh').addEventListener('click', () => loadAuthority(state.generation).catch((error) => showError('Authority refresh failed', error.message)));
+   if ($('authorityRegisterToggle')) $('authorityRegisterToggle').addEventListener('click', () => { if ($('authorityRegisterForm')) $('authorityRegisterForm').hidden = !$('authorityRegisterForm').hidden; });
+   if ($('authorityRegisterCancel')) $('authorityRegisterCancel').addEventListener('click', () => { $('authorityRegisterForm').hidden = true; $('authorityRegisterForm').reset(); });
+   if ($('authorityRegisterForm')) $('authorityRegisterForm').addEventListener('submit', async (event) => { event.preventDefault(); if (!event.currentTarget.reportValidity()) return; const status = $('authorityRegisterStatus'); const button = event.currentTarget.querySelector('button[type="submit"]'); button.disabled = true; status.textContent = 'Registering…'; try { await api('/api/authority/clinics', { method: 'POST', body: JSON.stringify({ clinic_id: $('authorityRegisterId').value.trim().toUpperCase(), name: $('authorityRegisterName').value.trim(), location: $('authorityRegisterLocation').value.trim(), active: true }) }); status.textContent = 'Clinic registered.'; event.currentTarget.reset(); await loadAuthority(state.generation); } catch (error) { status.textContent = `Registration failed: ${error.message}`; } finally { button.disabled = false; } });
+   if ($('authorityCloseDetail')) $('authorityCloseDetail').addEventListener('click', () => { if (els.authorityClinicDetail) els.authorityClinicDetail.hidden = true; authorityClinicId = null; });
+   if (els.authorityFollowupForm) els.authorityFollowupForm.addEventListener('submit', async (event) => { event.preventDefault(); if (!authorityClinicId || !els.authorityFollowupMessage.value.trim()) return; const button = event.currentTarget.querySelector('button[type="submit"]'); button.disabled = true; try { await api(`/api/authority/clinics/${encodeURIComponent(authorityClinicId)}/followups`, { method: 'POST', body: JSON.stringify({ message: els.authorityFollowupMessage.value.trim() }) }); els.authorityFollowupMessage.value = ''; els.authorityFollowupStatus.textContent = 'Simulated follow-up request recorded.'; await loadAuthority(state.generation); await openAuthorityClinic(authorityClinicId); } catch (error) { els.authorityFollowupStatus.textContent = `Request failed: ${error.message}`; } finally { button.disabled = false; } });
   window.addEventListener('resize', () => { if (state.live) renderPowerCutForecast(state.live); if (state.model && !els.modelContent.hidden) { drawChart($('reliabilityChart'), state.model.calibration, '#38d6c3', 'Reliability curve: observed outcome versus predicted probability'); drawChart($('rocChart'), state.model.roc_curve, '#f5a35b', 'ROC curve: true positive rate versus false positive rate'); } });
   $('alertsList').addEventListener('click', async (event) => {
     const button = event.target.closest('[data-ack]');
