@@ -15,6 +15,14 @@ def test_priority_endpoint_and_simulated_sms_states(monkeypatch, tmp_path) -> No
         assert dashboard.status_code == 200
         assert "Clinic Cold Chain / Control Room" in dashboard.text
         assert "Live clinic priority ranking" in dashboard.text
+        assert 'rel="canonical"' in dashboard.text
+        assert 'property="og:title"' in dashboard.text
+        assert 'property="og:image"' in dashboard.text
+        assert client.get("/robots.txt").status_code == 200
+        assert "Sitemap: https://clinic-cold-chain.onrender.com/sitemap.xml" in client.get("/robots.txt").text
+        assert client.get("/sitemap.xml").status_code == 200
+        assert "https://clinic-cold-chain.onrender.com/" in client.get("/sitemap.xml").text
+        assert client.get("/clinic-cold-chain-og.svg").status_code == 200
 
         initial = client.get("/api/priority")
         assert initial.status_code == 200
