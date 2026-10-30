@@ -232,6 +232,21 @@ def test_authentication_roles_disabled_users_and_expiry(runtime, monkeypatch):
         assert client.get("/api/state").status_code == 401
 
 
+def test_security_headers_are_present_on_html_and_api_responses(runtime):
+    with TestClient(runtime()) as client:
+        headers = {"x-forwarded-proto": "https"}
+        page = client.get("/coldchain", headers=headers)
+        api = client.get("/api/auth/config", headers=headers)
+        for response in (page, api):
+            assert response.headers["x-content-type-options"] == "nosniff"
+            assert response.headers["x-frame-options"] == "DENY"
+            assert response.headers["strict-transport-security"].startswith("max-age=31536000")
+            assert response.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
+            assert response.headers["referrer-policy"] == "no-referrer"
+            assert "default-src 'self'" in response.headers["content-security-policy"]
+            assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
+
 def test_required_mode_fails_closed(runtime, monkeypatch):
     monkeypatch.setattr(config, "AUTH_MODE", "not-a-mode")
     with pytest.raises(ValueError):
