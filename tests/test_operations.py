@@ -210,11 +210,10 @@ def test_authentication_roles_disabled_users_and_expiry(runtime, monkeypatch):
     with TestClient(runtime()) as client:
         assert client.get("/api/health").status_code == 200
         assert client.get("/api/state").status_code == 401
-        assert client.get("/api/auth/config").status_code == 401
+        assert client.get("/api/auth/config").json()["auth_mode"] == "required"
         assert client.post("/api/auth/login", json={"username": config.DEMO_USERNAME, "password": "wrong"}).status_code == 401
         login = client.post("/api/auth/login", json={"username": config.DEMO_USERNAME, "password": config.DEMO_PASSWORD}).json()
         client.headers["Authorization"] = "Bearer " + login["access_token"]
-        assert client.get("/api/auth/config").json()["auth_mode"] == "required"
         assert client.get("/api/state").status_code == 200
         with sqlite3.connect(config.DB_PATH) as db:
             db.execute("UPDATE users SET role='auditor' WHERE username=?", (config.DEMO_USERNAME,))
@@ -254,17 +253,6 @@ def test_security_headers_are_present_on_html_and_api_responses(runtime):
 def test_untrusted_host_is_rejected(runtime):
     with TestClient(runtime()) as client:
         assert client.get("/", headers={"host": "attacker.example"}).status_code == 400
-
-
-def test_browser_unknown_route_is_branded_but_api_unknown_route_stays_json(runtime):
-    with TestClient(runtime()) as client:
-        page = client.get("/definitely-not-a-real-page", headers={"accept": "text/html"})
-        assert page.status_code == 404
-        assert page.headers["content-type"].startswith("text/html")
-        assert "That page is not in the control room." in page.text
-        api = client.get("/api/definitely-not-a-real-endpoint")
-        assert api.status_code == 404
-        assert api.json() == {"detail": "Not Found"}
 
 
 def test_required_mode_fails_closed(runtime, monkeypatch):

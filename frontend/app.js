@@ -661,19 +661,7 @@
       if (!['demo', 'required'].includes(config.auth_mode)) throw new Error('Authentication configuration is unavailable or unsupported.');
       state.config = config; $('loginForm').hidden = false; $('demoEnter').hidden = !isDemo();
       if (isDemo()) await enterDemo(); else $('authStatus').textContent = 'Authentication required. Sign in before accessing operational data.';
-    } catch (error) {
-      if (generation !== state.generation) return;
-      if (error.status === 401) {
-        // Required mode intentionally protects /api/auth/config. The login form
-        // must still be usable when the caller has no session yet.
-        state.config = { auth_mode: 'required', demo: false };
-        $('loginForm').hidden = false; $('demoEnter').hidden = true; $('retryAuth').hidden = true;
-        $('authStatus').textContent = 'Authentication required. Sign in before accessing operational data.';
-      } else {
-        $('authStatus').textContent = `Cannot verify access configuration. ${error.message}`;
-        $('retryAuth').hidden = false;
-      }
-    }
+    } catch (error) { if (generation === state.generation) { $('authStatus').textContent = `Cannot verify access configuration. ${error.message}`; $('retryAuth').hidden = false; } }
   }
   function scheduleDashboardPoll() {
     clearTimeout(state.pollTimer);
@@ -816,12 +804,7 @@
       if (generation !== state.generation) return;
       if (typeof data.access_token !== 'string' || !data.access_token || !finite(data.expires_in) || Number(data.expires_in) <= 0) throw new Error('The server returned an invalid session.');
       enterSession(data.user, data.access_token, data.expires_in);
-    } catch (error) {
-      if (generation === state.generation) {
-        $('authStatus').textContent = `Sign-in unsuccessful. ${error.status === 401 ? 'Invalid username or password.' : error.message}`;
-        $('authStatus').setAttribute('aria-live', 'assertive');
-      }
-    }
+    } catch (error) { if (generation === state.generation) $('authStatus').textContent = `Sign-in unsuccessful. ${error.message}`; }
     finally { if (generation === state.generation) { $('password').value = ''; $('loginButton').disabled = false; $('demoEnter').disabled = false; } }
   });
   $('logoutButton').addEventListener('click', () => { lockSession('Signed out. Sign in or explicitly re-enter the local demo.'); $('username').focus(); });

@@ -18,7 +18,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import config
@@ -181,7 +180,6 @@ def _scoped_state(state: dict[str, Any], principal: Principal) -> dict[str, Any]
 
 def create_app() -> FastAPI:
     config.validate()
-    frontend = Path(__file__).resolve().parents[1] / "frontend"
     runtime_lock = RLock()
     login_lock = RLock()
     codeflow_rate_lock = RLock()
@@ -283,14 +281,6 @@ def create_app() -> FastAPI:
             {key: error[key] for key in ("type", "loc", "msg")} for error in exc.errors()
         ]})
 
-    @app.exception_handler(StarletteHTTPException)
-    async def http_error(request: Request, exc: StarletteHTTPException):
-        """Keep API errors machine-readable and browser routes on-brand."""
-        not_found = frontend / "404.html"
-        if exc.status_code == 404 and not request.url.path.startswith("/api/") and not_found.is_file():
-            return FileResponse(str(not_found), status_code=404, media_type="text/html")
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
-
     def storage() -> Storage:
         with runtime_lock:
             if app.state.storage is None:
@@ -367,7 +357,7 @@ def create_app() -> FastAPI:
                 "stale_feeder_count": current_state["stale_feeder_count"]}
 
     @app.get("/api/auth/config")
-    def auth_config(_: Principal = Depends(require_roles("clinic_operator", "grid_operator", "admin", "auditor"))) -> dict[str, Any]:
+    def auth_config() -> dict[str, Any]:
         return {"auth_mode": config.AUTH_MODE, "demo": config.AUTH_MODE == "demo", "roles": sorted(ROLES)}
 
     @app.post("/api/auth/login")
@@ -667,6 +657,7 @@ def create_app() -> FastAPI:
             execution_context=request.execution,
         )
 
+    frontend = Path(__file__).resolve().parents[1] / "frontend"
     if frontend.is_dir():
         coldchain_file = frontend / "coldchain.html"
         if coldchain_file.is_file():
@@ -701,9 +692,7 @@ def create_app() -> FastAPI:
             def codeflow_css() -> FileResponse:
                 return FileResponse(str(codeflow_css_file), media_type="text/css")
 
-        # Keep StaticFiles from auto-serving 404.html for unknown API paths;
-        # the exception handler above supplies the branded browser response.
-        app.mount("/", StaticFiles(directory=str(frontend), html=False), name="frontend")
+        app.mount("/", StaticFiles(directory=str(frontend), html=True), name="frontend")
     return app
 
 
