@@ -52,6 +52,12 @@ Load the same environment/DB path as the server; the CLI accepts `--env-file .en
 before the subcommand. Bootstrap accounts use `COLDCHAIN_DEMO_*` variables for
 legacy compatibility, even in required-auth mode.
 
+If a hosted deployment does not provide database shell access, set
+`COLDCHAIN_BOOTSTRAP_SYNC=true` temporarily, deploy once, verify the configured
+`COLDCHAIN_DEMO_USERNAME` and `COLDCHAIN_DEMO_PASSWORD`, then set the flag back
+to `false` and deploy again. This is an explicit credential-rotation switch and
+is disabled by default.
+
 ## API overview
 
 Operational requests require `Authorization: Bearer <session-token>` in required

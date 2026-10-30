@@ -115,7 +115,13 @@ class Storage:
 
     @staticmethod
     def _ensure_demo_user(db: sqlite3.Connection, username: str, password: str, role: str) -> None:
-        if db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone():
+        existing = db.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+        if existing:
+            # Explicit, deployment-controlled rotation path for environments
+            # without database shell access. It is disabled by default.
+            if config.AUTH_MODE == "required" and config.BOOTSTRAP_SYNC:
+                db.execute("UPDATE users SET password_hash=?, role=?, active=1 WHERE id=?",
+                           (hash_password(password), role, existing[0]))
             return
         db.execute(
             """INSERT OR IGNORE INTO users(username,password_hash,role,active,created_at) VALUES(?,?,?,?,?)""",

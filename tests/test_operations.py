@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend import config, main, weather
-from backend.auth import Principal, issue_token
+from backend.auth import Principal, issue_token, verify_password
 from backend.storage import Storage
 
 
@@ -270,6 +270,20 @@ def test_reinitializing_storage_does_not_reset_credentials(runtime):
     hashed = first.user_by_username(config.DEMO_USERNAME)["password_hash"]
     second = Storage()
     assert second.user_by_username(config.DEMO_USERNAME)["password_hash"] == hashed
+
+
+def test_explicit_required_bootstrap_sync_rotates_credentials(runtime, monkeypatch):
+    required_mode(monkeypatch)
+    monkeypatch.setattr(config, "BOOTSTRAP_SYNC", False)
+    first = Storage()
+    first_hash = first.user_by_username(config.DEMO_USERNAME)["password_hash"]
+    monkeypatch.setattr(config, "DEMO_PASSWORD", "rotated-test-password-123")
+    Storage()
+    assert Storage().user_by_username(config.DEMO_USERNAME)["password_hash"] == first_hash
+    monkeypatch.setattr(config, "BOOTSTRAP_SYNC", True)
+    rotated = Storage().user_by_username(config.DEMO_USERNAME)
+    assert rotated is not None
+    assert verify_password(config.DEMO_PASSWORD, rotated["password_hash"])
 
 
 def test_feedback_requires_prediction_and_is_idempotent(runtime):

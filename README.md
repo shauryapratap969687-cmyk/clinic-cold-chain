@@ -355,7 +355,10 @@ fail startup. Run with `--env-file .env`. Never send these secrets in chat or
 commit the `.env` or database.
 
 Users are bootstrapped only when their username is absent. Changing environment
-credentials does **not** reset an existing account. Account provisioning,
+credentials does **not** reset an existing account by default. For a deployment
+without database shell access, temporarily set `COLDCHAIN_BOOTSTRAP_SYNC=true`,
+deploy once, verify the configured login, then set it back to `false` and deploy
+again. Account provisioning,
 credential rotation, MFA/OIDC, TLS and backup policy remain deployment work.
 See [operations guide](docs/OPERATIONS.md).
 
